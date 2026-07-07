@@ -4,6 +4,13 @@ on:
   schedule:
     - cron: "10 * * * *"   # hourly, ~10 min past (lets the fresh cycle settle)
   workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "pipeline/**"
+      - "site/**"
+      - ".github/workflows/nowcast.yml"
+      - "requirements.txt"
 
 concurrency:
   group: nowcast
