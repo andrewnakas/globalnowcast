@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Global Nowcast — REFC Radar Composite</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <header id="topbar">
+    <div class="brand">Global Nowcast <span>REFC composite</span></div>
+    <div class="meta">
+      <span id="valid-time">—</span>
+      <span id="cycle-info" class="dim">—</span>
+    </div>
+  </header>
+
+  <div id="panel">
+    <div class="products">
+      <button data-product="rapid" class="active">Rapid · 18h</button>
+      <button data-product="extended">Extended · 48h</button>
+    </div>
+
+    <div class="controls">
+      <button id="play" title="Play/Pause">▶</button>
+      <button id="step-back" title="Step back">⏮</button>
+      <button id="step-fwd" title="Step forward">⏭</button>
+      <input type="range" id="scrub" min="0" max="0" value="0">
+    </div>
+
+    <div class="row">
+      <label>Opacity</label>
+      <input type="range" id="opacity" min="20" max="100" value="80">
+    </div>
+
+    <div class="row legend">
+      <label>dBZ</label>
+      <div id="legend-bar"></div>
+      <div class="legend-scale"><span>5</span><span>35</span><span>75</span></div>
+    </div>
+  </div>
+
+  <div id="status">loading…</div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

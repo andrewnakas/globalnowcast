@@ -1,0 +1,6 @@
+site/data/
+__pycache__/
+*.pyc
+*.grib2
+.venv/
+venv/
