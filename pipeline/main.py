@@ -8,6 +8,7 @@ from pathlib import Path
 
 import requests
 
+from correct import correct, is_active
 from gfs import fetch_refc, find_latest_cycle, lead_offset
 from render import decode_refc, render_png
 
@@ -23,7 +24,7 @@ def build_frame(session: requests.Session, cycle: datetime, lead: int):
     for attempt in range(3):
         try:
             grib = fetch_refc(session, cycle, lead)
-            render_png(decode_refc(grib), FRAMES_DIR / name)
+            render_png(correct(decode_refc(grib)), FRAMES_DIR / name)
             return {"file": name, "valid": valid.strftime("%Y-%m-%dT%H:00Z")}
         except Exception as e:  # noqa: BLE001 - a lost frame must not kill the run
             if attempt == 2:
@@ -54,6 +55,7 @@ def main() -> None:
     manifest = {
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "cycle": cycle.strftime("%Y-%m-%dT%H:00Z"),
+        "corrected": is_active(),
         "products": {
             "rapid": good[: RAPID_HOURS + 1],
             "extended": good,

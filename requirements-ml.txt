@@ -1,0 +1,10 @@
+# Training-only dependencies. NOT installed in GitHub Actions — training runs
+# off-platform on a free GPU (Kaggle / Colab). The live pipeline only needs
+# onnxruntime (in requirements.txt) to run the exported model.
+torch>=2.2
+numpy
+h5py
+requests
+pygrib
+onnx
+onnxscript  # required by torch.onnx.export in torch >= 2.x

@@ -4,3 +4,16 @@ __pycache__/
 *.grib2
 .venv/
 venv/
+
+# ML training artifacts. Trained weights are NOT committed by default — the live
+# site stays on raw GFS until a real model exists. To ship a model you trained,
+# force-add it: `git add -f ml/model/refc_correction.onnx` (see ml/README.md).
+ml/shards/
+*.npz
+*.hdf5
+*.HDF5
+ml/model/*.pt
+ml/model/*.ckpt
+ml/model/*.onnx
+ml/model/*.onnx.data
+.DS_Store

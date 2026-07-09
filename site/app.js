@@ -82,8 +82,9 @@ function show(i) {
   const d = parseUTC(frame.valid);
   const leadH = Math.round((d - parseUTC(state.manifest.cycle)) / 3.6e6);
   el("valid-time").textContent = `${fmt.format(d)}  ·  +${leadH}h`;
+  const ml = state.manifest.corrected ? " · ML-corrected" : "";
   el("cycle-info").textContent =
-    `GFS ${state.manifest.cycle} · built ${state.manifest.generated_at.slice(11, 16)}Z`;
+    `GFS ${state.manifest.cycle} · built ${state.manifest.generated_at.slice(11, 16)}Z${ml}`;
 }
 
 function play() {
