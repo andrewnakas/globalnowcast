@@ -128,12 +128,17 @@ def main() -> int:
         got = sequences_from_tile(tile, args.stride, args.max_per_tile,
                                   not args.no_hrrr)
         for x, y, h, t in got:
+            # Drop the sample rather than store a short h: appending to x and y but
+            # not h desynchronises the arrays, and every sample after the gap then
+            # silently trains against another sample's HRRR.
+            if h is None and not args.no_hrrr:
+                continue
             x_buf.append(x)
             y_buf.append(y)
             t_buf.append(str(t))
             if h is not None:
                 h_buf.append(h)
-        kept += len(got)
+            kept += 1
         rate = kept / max(time.time() - t_start, 1e-9)
         print(f"[{k}/{args.tiles}] ({i:4d},{j:4d}) {str(tile.times[0])[:10]}  "
               f"+{len(got):3d} seq  total {kept}  ({rate:.1f}/s)")
@@ -155,6 +160,11 @@ def main() -> int:
 
 def _flush(out, shard, x_buf, y_buf, h_buf, t_buf, n):
     path = out / f"tiles_{shard:04d}.npz"
+    # Sample i of every array must describe the same sequence. A short h would pair
+    # each sample after the gap with another sample's forecast, which trains happily
+    # and is invisible in the loss.
+    assert len(x_buf) == len(y_buf) == len(t_buf), "sample arrays out of step"
+    assert not h_buf or len(h_buf) == len(x_buf), "hrrr array out of step"
     data = {"x": np.stack(x_buf[:n]), "y": np.stack(y_buf[:n]),
             "t": np.array(t_buf[:n])}
     if h_buf:

@@ -19,3 +19,5 @@ ml/model/*.ckpt
 ml/model/*.onnx
 ml/model/*.onnx.data
 .DS_Store
+ml/tiles/
+ml/model/*.pt
