@@ -14,6 +14,8 @@ GFS only catches up around +4.5 h, which is where the blend hands over. That is 
 later than the 2 h rule of thumb, so the weights stay observation-dominated well
 past the usual crossover.
 """
+import sys
+
 import numpy as np
 
 from obs import FILL, GFS_LAT, GFS_LON, dbz_to_rain, rain_to_dbz
@@ -25,9 +27,20 @@ H, W = GFS_LAT.size, GFS_LON.size
 # conversion below is load-bearing rather than an optimisation.
 U8_LO, U8_HI = FILL, 60.0
 FLOW_UPSCALE = 2  # estimate motion on a 2x grid to resolve sub-pixel displacement
+UPSCALE_MAX_PX = 4096  # above this the grid is fine enough that upscaling is waste
 FLOW_PARAMS = dict(pyr_scale=0.5, levels=5, winsize=31, iterations=3,
                    poly_n=5, poly_sigma=1.2, flags=0)
-MAX_FLOW_PX = 20.0  # per 30 min; anything faster means a corrupt frame pair
+# Sanity bound on storm motion. Expressed as a speed, not a pixel count: a fixed
+# pixel budget means something different on every grid, and a limit tuned for 28 km
+# cells silently rejects ordinary motion at 2 km, degrading the nowcast to
+# persistence without saying so.
+#
+# This is a corruption check, not a meteorological one. Measured 99th-percentile
+# motion on real global pairs has a median around 210 km/h and reaches well beyond
+# that in fast flow, so the bound sits high deliberately; it only needs to catch a
+# mismatched or garbled frame pair. 1100 km/h preserves the behaviour of the pixel
+# limit this replaces on the global grid.
+MAX_FLOW_KMH = 1100.0
 
 # Longitude is periodic but cv2.remap is not, so the field is padded before warping
 # and cropped after. Without this the antimeridian grows a dry seam - right where
@@ -54,8 +67,20 @@ OBS_ONLY_MIN = 45.0
 # observations that are perfectly good right up to the edge, and measured a clear
 # CSI loss there (0.496 -> 0.447 over the tapered rows) to hide a cosmetic seam.
 
-_GX, _GY = np.meshgrid(np.arange(W + 2 * WRAP_PAD, dtype=np.float32),
-                       np.arange(H, dtype=np.float32))
+_MESH: dict[tuple, tuple] = {}
+
+
+def _mesh(h: int, w: int):
+    """Cached pixel-coordinate grids for remap, keyed by shape.
+
+    Built once per shape: at 2 km these are hundreds of MB, so rebuilding them per
+    frame would dominate the runtime.
+    """
+    key = (h, w)
+    if key not in _MESH:
+        _MESH[key] = np.meshgrid(np.arange(w, dtype=np.float32),
+                                 np.arange(h, dtype=np.float32))
+    return _MESH[key]
 
 
 def to_u8(dbz: np.ndarray) -> np.ndarray:
@@ -65,22 +90,39 @@ def to_u8(dbz: np.ndarray) -> np.ndarray:
 
 
 def estimate_flow(prev_dbz: np.ndarray, last_dbz: np.ndarray,
-                  gap_min: float, step_min: float = 30.0) -> np.ndarray:
+                  gap_min: float, step_min: float = 30.0,
+                  km_per_px: float = 0.25 * 111.0) -> np.ndarray:
     """Dense motion field in pixels per `step_min`, shape (H, W, 2) as (dx, dy).
 
     Estimated on an upscaled pair and divided back down, which recovers motion
-    finer than one 0.25 degree cell. The result is rescaled from the pair's actual
-    separation to `step_min` so callers advect in consistent units.
+    finer than one cell on a coarse grid. The result is rescaled from the pair's
+    actual separation to `step_min` so callers advect in consistent units.
+
+    `km_per_px` is only used to sanity-check the result against a physical speed;
+    it defaults to the global 0.25 degree grid.
     """
     import cv2
 
-    up = lambda a: cv2.resize(to_u8(a), (W * FLOW_UPSCALE, H * FLOW_UPSCALE),
-                              interpolation=cv2.INTER_LINEAR)
+    h, w = prev_dbz.shape
+    # Upscaling resolves sub-pixel motion, which matters at 0.25 degrees where 10
+    # minutes of drift is under a cell. On a fine grid the motion is already several
+    # pixels, so the upscale earns nothing and costs 4x the memory.
+    up_factor = FLOW_UPSCALE if max(h, w) <= UPSCALE_MAX_PX else 1
+    if up_factor > 1:
+        up = lambda a: cv2.resize(to_u8(a), (w * up_factor, h * up_factor),
+                                  interpolation=cv2.INTER_LINEAR)
+    else:
+        up = to_u8
     flow = cv2.calcOpticalFlowFarneback(up(prev_dbz), up(last_dbz), None, **FLOW_PARAMS)
-    flow = cv2.resize(flow, (W, H), interpolation=cv2.INTER_LINEAR) / FLOW_UPSCALE
+    if up_factor > 1:
+        flow = cv2.resize(flow, (w, h), interpolation=cv2.INTER_LINEAR) / up_factor
     flow *= step_min / float(gap_min)
 
-    if np.percentile(np.hypot(flow[..., 0], flow[..., 1]), 99) > MAX_FLOW_PX:
+    p99_px = np.percentile(np.hypot(flow[..., 0], flow[..., 1]), 99)
+    kmh = p99_px * km_per_px * (60.0 / step_min)
+    if kmh > MAX_FLOW_KMH:
+        print(f"nowcast: rejecting flow, p99 {kmh:.0f} km/h exceeds "
+              f"{MAX_FLOW_KMH:.0f}", file=sys.stderr)
         return np.zeros_like(flow)  # implausible; fall back to persistence
     return flow.astype(np.float32)
 
@@ -95,14 +137,22 @@ def advect(field: np.ndarray, flow: np.ndarray, steps: float) -> np.ndarray:
     if steps == 0 or not flow.any():
         return field.astype(np.float32)
 
-    src = np.pad(field.astype(np.float32), ((0, 0), (WRAP_PAD, WRAP_PAD)), mode="wrap")
-    fl = np.pad(flow, ((0, 0), (WRAP_PAD, WRAP_PAD), (0, 0)), mode="wrap")
+    h, w = field.shape
+    # Longitude only wraps on a global grid; a regional window has real edges, and
+    # wrapping one would advect Atlantic weather into the Pacific.
+    pad = WRAP_PAD if w == W else 0
+    if pad:
+        src = np.pad(field.astype(np.float32), ((0, 0), (pad, pad)), mode="wrap")
+        fl = np.pad(flow, ((0, 0), (pad, pad), (0, 0)), mode="wrap")
+    else:
+        src, fl = field.astype(np.float32), flow
+    gx, gy = _mesh(h, w + 2 * pad)
     warped = cv2.remap(src,
-                       _GX - steps * fl[..., 0],
-                       _GY - steps * fl[..., 1],
+                       gx - steps * fl[..., 0],
+                       gy - steps * fl[..., 1],
                        cv2.INTER_LINEAR,
                        borderMode=cv2.BORDER_CONSTANT, borderValue=FILL)
-    return warped[:, WRAP_PAD:WRAP_PAD + W]
+    return warped[:, pad:pad + w] if pad else warped
 
 
 def blend_weight(lead_min: float) -> float:

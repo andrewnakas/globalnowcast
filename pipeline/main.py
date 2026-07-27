@@ -71,7 +71,8 @@ def build_nowcast(session: requests.Session, now: datetime, gfs_by_valid: dict):
             return None, None
         prev_dbz, last_dbz, mask, obs_time, gap_min = pair
 
-        flow = nowcast.estimate_flow(prev_dbz, last_dbz, gap_min)
+        flow = nowcast.estimate_flow(prev_dbz, last_dbz, gap_min,
+                                     km_per_px=0.25 * 111.0)
         p99 = float(np.percentile(np.hypot(flow[..., 0], flow[..., 1]), 99))
         if p99 < 1.0:
             # Flow this small means the field is barely moving - or that the uint8

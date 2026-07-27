@@ -54,51 +54,108 @@ def _reduceat_index(src_axis: np.ndarray, dst_axis: np.ndarray):
     0.25 / 0.02 = 12.5, so cells alternate between 12 and 13 source pixels. The
     counts are therefore computed rather than assumed — an off-by-one here would
     silently shift the entire field by a fraction of a cell.
+
+    Source points outside the destination axis are dropped, which is what lets a
+    sub-global window work: only the pixels inside it are grouped. `full` means the
+    axis spans the whole source (the global longitude case), where every point
+    belongs somewhere even if it sits past the last cell centre — 179.98 wraps round
+    to -180 rather than falling outside the world.
     """
     nearest = np.abs(src_axis[:, None] - dst_axis[None, :]).argmin(axis=1)
+    span = abs(dst_axis[-1] - dst_axis[0]) + abs(dst_axis[1] - dst_axis[0])
+    covers_all = span >= abs(src_axis[-1] - src_axis[0]) - 1e-9
+    if covers_all:
+        lo, hi = 0, src_axis.size
+    else:
+        step = abs(dst_axis[1] - dst_axis[0])
+        inside = np.abs(src_axis - dst_axis[nearest]) <= step / 2 + 1e-9
+        # Contiguous by construction (both axes monotonic), so a slice suffices.
+        lo, hi = int(np.argmax(inside)), src_axis.size - int(np.argmax(inside[::-1]))
+        nearest = nearest[lo:hi]
     dst_hit = np.unique(nearest)
     starts = np.searchsorted(nearest, dst_hit)
-    counts = np.add.reduceat(np.ones(src_axis.size, np.float32), starts)
-    assert counts.sum() == src_axis.size, "regrid indices lost source pixels"
-    return dst_hit, starts, counts
+    counts = np.add.reduceat(np.ones(nearest.size, np.float32), starts)
+    assert counts.sum() == nearest.size, "regrid indices lost source pixels"
+    return dst_hit, starts, counts, (lo, hi)
 
 
-_ROWS, _ROW_STARTS, _ROW_COUNTS = _reduceat_index(SRC_LAT, GFS_LAT)
-_COLS, _COL_STARTS, _COL_COUNTS = _reduceat_index(SRC_LON, GFS_LON)
+class Grid:
+    """A target lat/lon grid, plus the regridding plan from the source onto it.
 
-# Which GFS rows the satellites can actually see (521 of 721).
-OBS_ROWS = np.zeros(GFS_LAT.size, bool)
-OBS_ROWS[_ROWS] = True
-
-
-def area_mean_regrid(rate: np.ndarray, valid: np.ndarray):
-    """Area-mean 0.02deg rain rate onto the 0.25deg GFS grid.
-
-    Nearest-neighbour would throw away ~99% of the source pixels here (each target
-    cell covers about 12x12 of them), which measurably distorts the wet fraction.
-    Averaging happens in rain rate, never in dBZ: dBZ is logarithmic, so a mean of
-    dBZ understates the true cell-mean rate.
-
-    Returns (mm/h, observed-mask) on the full 721x1440 grid; cells outside the
-    satellite domain or with too little valid data are 0.0 and False.
+    The global 0.25 degree grid is the default and what the site ships. A window at
+    finer spacing is what makes the output comparable to published radar benchmarks,
+    which are all regional at 1-2 km; global at 2 km does not fit the runner's memory
+    (see ml/PLAN-2KM.md).
     """
+
+    def __init__(self, lat: np.ndarray, lon: np.ndarray, name: str = "global"):
+        self.name = name
+        self.lat, self.lon = lat, lon
+        self.shape = (lat.size, lon.size)
+        self.rows, self.row_starts, self.row_counts, self.row_span = \
+            _reduceat_index(SRC_LAT, lat)
+        self.cols, self.col_starts, self.col_counts, self.col_span = \
+            _reduceat_index(SRC_LON, lon)
+        # Which target rows the satellites can actually see (521 of 721 globally).
+        self.observed_rows = np.zeros(lat.size, bool)
+        self.observed_rows[self.rows] = True
+
+    @classmethod
+    def window(cls, lat_max, lat_min, lon_min, lon_max, res, name="window"):
+        """A regional grid at `res` degrees, snapped to whole source pixels."""
+        lat = np.arange(lat_max, lat_min - res / 2, -res)
+        lon = np.arange(lon_min, lon_max + res / 2, res)
+        return cls(lat, lon, name)
+
+    def __repr__(self):
+        res = abs(self.lat[1] - self.lat[0])
+        return (f"<Grid {self.name} {self.shape[0]}x{self.shape[1]} @{res:g}deg "
+                f"({res * 111:.1f} km)>")
+
+
+GLOBAL = Grid(GFS_LAT, GFS_LON, "global")
+
+# Benchmark-comparable windows. CONUS matches the domain DGMR and NowcastNet are
+# scored on, and MRMS radar truth is available there (see ml/data/mrms.py).
+CONUS_2KM = Grid.window(50.0, 24.0, -125.0, -66.0, 0.02, "conus2km")
+
+# Back-compat: the module-level names the rest of the pipeline already imports.
+OBS_ROWS = GLOBAL.observed_rows
+
+
+def area_mean_regrid(rate: np.ndarray, valid: np.ndarray, grid: "Grid" = None):
+    """Area-mean 0.02deg rain rate onto `grid` (global 0.25deg by default).
+
+    Nearest-neighbour would throw away ~99% of the source pixels at 0.25deg (each
+    target cell covers about 12x12 of them), which measurably distorts the wet
+    fraction. Averaging happens in rain rate, never in dBZ: dBZ is logarithmic, so a
+    mean of dBZ understates the true cell-mean rate.
+
+    Returns (mm/h, observed-mask) on the grid; cells outside the satellite domain or
+    with too little valid data are 0.0 and False.
+    """
+    grid = grid or GLOBAL
+    r0, r1 = grid.row_span
+    c0, c1 = grid.col_span
+
     def _block_sum(a):
-        return np.add.reduceat(np.add.reduceat(a, _ROW_STARTS, axis=0),
-                               _COL_STARTS, axis=1)
+        a = a[r0:r1, c0:c1]
+        return np.add.reduceat(np.add.reduceat(a, grid.row_starts, axis=0),
+                               grid.col_starts, axis=1)
 
     wet = np.where(valid, rate, 0.0).astype(np.float32)
     total = _block_sum(wet)
     seen = _block_sum(valid.astype(np.float32))
-    cells = _ROW_COUNTS[:, None] * _COL_COUNTS[None, :]
+    cells = grid.row_counts[:, None] * grid.col_counts[None, :]
 
     frac = seen / cells
     ok = frac >= MIN_VALID_FRAC
     mean = np.divide(total, seen, out=np.zeros_like(total), where=seen > 0)
 
-    out = np.zeros((GFS_LAT.size, GFS_LON.size), np.float32)
-    mask = np.zeros((GFS_LAT.size, GFS_LON.size), bool)
-    out[np.ix_(_ROWS, _COLS)] = np.where(ok, mean, 0.0)
-    mask[np.ix_(_ROWS, _COLS)] = ok
+    out = np.zeros(grid.shape, np.float32)
+    mask = np.zeros(grid.shape, bool)
+    out[np.ix_(grid.rows, grid.cols)] = np.where(ok, mean, 0.0)
+    mask[np.ix_(grid.rows, grid.cols)] = ok
     return out, mask
 
 
@@ -153,8 +210,8 @@ def list_slot(session: requests.Session, slot: datetime) -> dict[int, str]:
     return found
 
 
-def fetch_key(session: requests.Session, key: str):
-    """Download one product file -> (dBZ on the GFS grid, observed mask)."""
+def fetch_key(session: requests.Session, key: str, grid: "Grid" = None):
+    """Download one product file -> (dBZ on `grid`, observed mask)."""
     import h5py  # deferred: only the obs path needs it
 
     r = session.get(f"{BUCKET}/{key}", timeout=(10, 90))
@@ -171,13 +228,14 @@ def fetch_key(session: requests.Session, key: str):
         valid = raw != fill
         rate = raw.astype(np.float32) * scale
 
-    mean_rate, mask = area_mean_regrid(rate, valid)
+    mean_rate, mask = area_mean_regrid(rate, valid, grid)
     dbz = np.where(mask, rain_to_dbz(mean_rate), FILL).astype(np.float32)
     return dbz, mask
 
 
 def fetch_frame(session: requests.Session, when: datetime, levels=GLB_LEVELS,
-                deadline: float | None = None, latency_min: int = LATENCY_MIN):
+                deadline: float | None = None, latency_min: int = LATENCY_MIN,
+                grid: "Grid" = None):
     """Newest usable observation at or before `when`.
 
     `latency_min` backs the search off from the requested time; it exists because
@@ -196,7 +254,7 @@ def fetch_frame(session: requests.Session, when: datetime, levels=GLB_LEVELS,
             for level in levels:
                 if level not in available:
                     continue
-                dbz, mask = fetch_key(session, available[level])
+                dbz, mask = fetch_key(session, available[level], grid)
                 return dbz, mask, slot, level
         except Exception as e:  # noqa: BLE001 - obs are optional, keep walking back
             print(f"obs: slot {slot:%Y-%m-%d %H:%M} failed: {e}", file=sys.stderr)
@@ -204,7 +262,8 @@ def fetch_frame(session: requests.Session, when: datetime, levels=GLB_LEVELS,
     return None
 
 
-def latest_pair(session: requests.Session, now: datetime, gap_min: int = 30):
+def latest_pair(session: requests.Session, now: datetime, gap_min: int = 30,
+                grid: "Grid" = None):
     """Two observations ~`gap_min` apart for motion estimation.
 
     The separation matters: at 0.25 degrees a 10-minute gap is sub-pixel motion and
@@ -220,7 +279,7 @@ def latest_pair(session: requests.Session, now: datetime, gap_min: int = 30):
     deadline = time.monotonic() + DEADLINE_S
     levels = tuple(n for n in GLB_LEVELS if n >= MIN_PAIR_LEVEL)
 
-    last = fetch_frame(session, now, levels=levels, deadline=deadline)
+    last = fetch_frame(session, now, levels=levels, deadline=deadline, grid=grid)
     if last is None:
         return None
     last_dbz, last_mask, last_time, level = last
@@ -228,7 +287,7 @@ def latest_pair(session: requests.Session, now: datetime, gap_min: int = 30):
     # Same level for both halves of the pair, so the visible domain is identical,
     # and target the slot exactly (latency_min=0) rather than backing off again.
     prev = fetch_frame(session, last_time - timedelta(minutes=gap_min),
-                       levels=(level,), deadline=deadline, latency_min=0)
+                       levels=(level,), deadline=deadline, latency_min=0, grid=grid)
     if prev is None:
         return None
     prev_dbz, prev_mask, prev_time, _ = prev
