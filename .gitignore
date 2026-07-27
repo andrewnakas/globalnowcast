@@ -12,6 +12,7 @@ ml/shards/
 *.npz
 *.hdf5
 *.HDF5
+verify/cache/
 ml/model/*.pt
 ml/model/*.ckpt
 ml/model/*.onnx

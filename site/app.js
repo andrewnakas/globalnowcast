@@ -20,7 +20,8 @@ L.tileLayer(
   "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
   {
     attribution:
-      '&copy; <a href="https://carto.com/">CARTO</a> · Data: NOAA GFS · ' +
+      '&copy; <a href="https://carto.com/">CARTO</a> · Data: NOAA GFS + ' +
+      'GOES/Himawari/Meteosat rain rate · ' +
       '<a href="https://github.com/andrewnakas/globalnowcast">source</a>',
     subdomains: "abcd",
     maxZoom: 8,
@@ -61,11 +62,14 @@ function preload(frames) {
 }
 
 function loadProduct(product) {
+  const frames = state.manifest.products[product];
+  if (!frames || !frames.length) return; // e.g. nowcast absent after an obs outage
   state.product = product;
-  state.frames = state.manifest.products[product];
+  state.frames = frames;
   state.images = preload(state.frames);
   state.index = 0;
   el("scrub").max = String(Math.max(0, state.frames.length - 1));
+  if (state.playing) startTimer(); // this product may animate at a different rate
   document.querySelectorAll(".products button").forEach((b) =>
     b.classList.toggle("active", b.dataset.product === product)
   );
@@ -79,22 +83,36 @@ function show(i) {
   overlay.setUrl(`data/frames/${frame.file}`);
   el("scrub").value = String(state.index);
 
+  // Nowcast frames are anchored to the observation time, not the model cycle —
+  // measuring their lead against the cycle would overstate it by hours.
   const d = parseUTC(frame.valid);
-  const leadH = Math.round((d - parseUTC(state.manifest.cycle)) / 3.6e6);
-  el("valid-time").textContent = `${fmt.format(d)}  ·  +${leadH}h`;
+  const nowcasting = state.product === "nowcast" && state.manifest.obs_time;
+  const ref = parseUTC(nowcasting ? state.manifest.obs_time : state.manifest.cycle);
+  const mins = Math.round((d - ref) / 6e4);
+  const lead = nowcasting
+    ? (mins === 0 ? "now" : `+${mins}m`)
+    : `+${Math.round(mins / 60)}h`;
+  el("valid-time").textContent = `${fmt.format(d)}  ·  ${lead}`;
+
   const ml = state.manifest.corrected ? " · ML-corrected" : "";
-  el("cycle-info").textContent =
-    `GFS ${state.manifest.cycle} · built ${state.manifest.generated_at.slice(11, 16)}Z${ml}`;
+  const label = { obs: "satellite obs", blend: "obs + GFS blend", gfs: "GFS" };
+  el("cycle-info").textContent = nowcasting
+    ? `${label[frame.source] || "obs"} from ${state.manifest.obs_time}${ml}`
+    : `GFS ${state.manifest.cycle} · built ${state.manifest.generated_at.slice(11, 16)}Z${ml}`;
+}
+
+function startTimer() {
+  clearInterval(state.timer);
+  // 15-minute steps need a quicker cadence than hourly ones to read as motion.
+  const ms = state.product === "nowcast" ? 280 : 450;
+  state.timer = setInterval(() => show(state.index + 1), ms);
 }
 
 function play() {
   state.playing = !state.playing;
   el("play").textContent = state.playing ? "⏸" : "▶";
-  if (state.playing) {
-    state.timer = setInterval(() => show(state.index + 1), 450);
-  } else {
-    clearInterval(state.timer);
-  }
+  if (state.playing) startTimer();
+  else clearInterval(state.timer);
 }
 
 function wire() {
@@ -118,7 +136,14 @@ async function init() {
     const res = await fetch(`data/manifest.json?t=${Date.now()}`);
     if (!res.ok) throw new Error(res.status);
     state.manifest = await res.json();
-    loadProduct("rapid");
+    // Hide products this run didn't produce, then open the most skilful one there is.
+    let first = null;
+    document.querySelectorAll(".products button").forEach((b) => {
+      const has = Boolean(state.manifest.products[b.dataset.product]?.length);
+      b.hidden = !has;
+      if (has && !first) first = b.dataset.product;
+    });
+    loadProduct(first || "rapid");
     el("status").classList.add("hidden");
   } catch (e) {
     el("status").textContent =

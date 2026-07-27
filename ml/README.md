@@ -29,7 +29,7 @@ against what's actually observed.
 | `data/mrms.py` | MRMS CONUS composite reflectivity (anonymous S3) → dBZ |
 | `data/gfs_label.py` | GFS REFC analysis (f000), reusing the production `pipeline/gfs.py` |
 | `data/build_dataset.py` | pairs GFS + obs at matching valid times into `.npz` shards |
-| `model.py` | the residual UNet (~0.5 M params, fully convolutional) |
+| `model.py` | the residual UNet (~59 k params, fully convolutional) |
 | `train.py` | patch training + masked loss + ONNX export |
 | `../pipeline/correct.py` | CPU inference hook used by the live pipeline |
 

@@ -9,6 +9,7 @@ on:
     paths:
       - "pipeline/**"
       - "site/**"
+      - "ml/**"          # shipping trained weights should rebuild the site
       - ".github/workflows/nowcast.yml"
       - "requirements.txt"
 
@@ -24,6 +25,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # the job fetches from S3; don't burn the 6h default on a hang
     steps:
       - uses: actions/checkout@v4
 
