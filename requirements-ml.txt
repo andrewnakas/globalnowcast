@@ -1,6 +1,5 @@
-# Training-only dependencies. NOT installed in GitHub Actions — training runs
-# off-platform on a free GPU (Kaggle / Colab). The live pipeline only needs
-# onnxruntime (in requirements.txt) to run the exported model.
+# Training-only dependencies. NOT installed in GitHub Actions — the hourly site build
+# uses requirements.txt alone.
 torch>=2.2
 numpy
 h5py
@@ -8,3 +7,10 @@ requests
 pygrib
 onnx
 onnxscript  # required by torch.onnx.export in torch >= 2.x
+
+# Reading the dynamical.org Icechunk Zarr catalog (MRMS radar truth, HRRR predictors).
+# Anonymous S3, us-west-2; see ml/PLAN-TRAIN.md.
+icechunk>=2.1
+zarr>=3
+xarray>=2025.1
+scipy  # KD-tree regrid from HRRR's Lambert grid onto a lat/lon target
