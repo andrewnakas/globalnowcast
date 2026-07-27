@@ -65,15 +65,61 @@ range. Its CSI values are reported in figures rather than tables, so they could 
 read off precisely; it is the right paper to compare against if someone wants a real
 number.
 
-## What would make a defensible comparison
+## The comparable measurement, and what it says
 
-Regrid a public radar benchmark (MRMS or OPERA) to 0.25°, then score this system and a
-published model on that shared grid at matched thresholds. That controls the resolution
-effect, which is the dominant confounder. Until then the honest framing is:
+`verify/run_radar.py` does the comparison properly: the ~2.2 km CONUS grid the
+benchmarks use, MRMS radar as independent truth, and the 1/2/4/8 mm/h thresholds the
+literature reports. Three cases, pooled:
 
-> Skill is measured against held-out satellite observations on a 0.25° global grid.
-> These figures are not comparable to radar benchmarks evaluated at 1–2 km, which are
-> a harder target.
+| lead | 1 mm/h | 2 mm/h | 4 mm/h | 8 mm/h |
+|------|--------|--------|--------|--------|
+| +30m | 0.186 | 0.156 | 0.125 | 0.099 |
+| +60m | 0.164 | 0.136 | 0.105 | 0.074 |
+| +90m | 0.134 | 0.115 | 0.086 | 0.047 |
+
+Against satellite self-truth at 0.25° the same system scores 0.62 at +30 min. Against
+radar at 2 km it scores 0.19. **Both numbers are real; they measure different things**,
+and the second is the one comparable to published work.
+
+Advection still beats persistence at every lead and threshold, and by a widening
+margin (at 8 mm/h, +90 min: 0.047 against 0.018, a 2.6x gain), so the motion model is
+working. But the level is low, and the reason is not the motion model.
+
+### The ceiling is the observation, not the nowcast
+
+Scoring the satellite against radar **at zero lead, with no forecast at all**:
+
+| threshold | CSI | POD | FAR | sat wet area | radar wet area |
+|-----------|-----|-----|-----|--------------|----------------|
+| 1 mm/h | 0.182 | 0.22 | 0.50 | 0.0098 | 0.0221 |
+| 4 mm/h | 0.105 | 0.14 | 0.71 | 0.0038 | 0.0079 |
+| 8 mm/h | 0.080 | 0.11 | 0.75 | 0.0017 | 0.0040 |
+
+The retrieval agrees with radar at CSI 0.18 before any forecasting happens. Our +30 min
+forecast scores 0.186 — **at, and marginally above, that ceiling**. The nowcasting is
+close to free; essentially all of the error is the satellite's disagreement with the
+radar it is being scored against.
+
+It sees under half the rain area radar sees (POD 0.22) and half of what it does report
+is not there (FAR 0.50). That is inherent to infrared and microwave retrieval: it
+infers rain from cloud-top properties rather than observing hydrometeors directly, so
+it misses shallow and warm-rain precipitation and lags convective initiation.
+
+**No motion model, and no amount of training, can exceed that ceiling** while the input
+is this retrieval. A model trained on radar targets could learn to correct part of the
+bias — that is exactly what `ml/PLAN-2KM.md` proposes — but the honest expectation is a
+fraction of the gap, not all of it.
+
+### So: can this compete with DGMR and NowcastNet?
+
+At their game, on their turf, no — and the reason is the sensor, not the method. They
+consume radar and predict radar, on domains where radar exists. Comparing a satellite
+retrieval to them on CSI-against-radar measures mostly the sensor gap.
+
+What this system does that they cannot is run **everywhere**, including the majority of
+the planet with no radar at all. The defensible claim is coverage, plus the measured
+internal result: it substantially beats both persistence and the GFS forecast it is
+built on, verified on a growing archive of held-out cases.
 
 ## What we *can* claim without qualification
 
