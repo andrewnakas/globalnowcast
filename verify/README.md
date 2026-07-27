@@ -116,16 +116,47 @@ regridding the two observation frames, ~1 s of optical flow, ~0.1 s of advection
 ~7 s encoding the 17 PNGs. Rendering and network dominate; the actual nowcasting maths
 is nearly free.
 
+## The accumulating archive
+
+The crossover was fitted on summer cases, and it is regime-dependent — later for
+organised frontal systems, earlier for scattered convection — so it may well move in
+winter. That refit cannot be done by backfilling, because the GFS archive on S3 only
+retains a couple of weeks. Cases have to be collected as they happen.
+
+`.github/workflows/verify.yml` runs weekly, scores a few recent days, and appends the
+contingency counts to `verify/archive.jsonl` (one line per case, ~23 KB, counts only
+— no fields). It is deliberately separate from the hourly site build and cannot
+delay or fail a deploy; `verify/**` is not in that workflow's path filter, so the
+archive commits do not trigger a rebuild. It scores with `NOWCAST_CORRECT=0` so rows
+stay comparable as the ML model comes and goes.
+
+Refit at any time from whatever has accumulated:
+
+```bash
+python verify/archive.py                  # pooled, and the best crossover
+python verify/archive.py --by season      # has the answer moved between seasons?
+python verify/archive.py --by region      # tropics vs midlatitudes
+python verify/archive.py --since 2026-12  # only recent cases
+```
+
+It ranks every candidate by mean CSI across all lead/threshold cells and reports how
+often each is at least as good as pure advection — the invariant the blend must keep.
+When a split shows the best crossover moving materially, that is the signal to make
+the handover conditional rather than the single constant in `pipeline/nowcast.py`.
+
+At 18 cases the answer is still 360 min. `--by region` already hints at the first
+refinement worth making: the tropics prefer a later handover (420) than the
+midlatitudes (360), which matches GFS being weakest there. That is one season of
+data, so it is noted rather than acted on.
+
 ## Caveats
 
-The baseline is 14 cases over one week in late July 2026 — enough to fit the
-crossover with some confidence, but all from a single season. The crossover is
-regime-dependent (later for organised frontal systems, earlier for scattered
-convection), so a winter refit may well move it. The GFS archive on S3 only retains
-a few weeks, which caps how far back cases can be built; a longer study would need
-to accumulate them going forward rather than backfilling.
+All cases so far are late July 2026 — one season. The archive above exists to fix
+that, but it needs months of wall-clock time before a seasonal split means anything.
+Until then, treat the handover as fitted for summer.
 
-Skill also varies strongly by latitude. GFS scores ~0.17 CSI in the tropics against
+Skill also varies strongly by latitude. GFS scores ~0.16 CSI in the tropics against
 ~0.26 in the subtropics, so extrapolation stays ahead of it for longer near the
 equator. A single global handover is a compromise; a latitude-dependent crossover is
-the obvious next refinement, but it should not be added until measured.
+the obvious next refinement, but it should not be added until more than one season
+supports it.

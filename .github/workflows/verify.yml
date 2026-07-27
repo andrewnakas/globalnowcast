@@ -1,0 +1,80 @@
+name: Accumulate verification
+
+# The handover lead in pipeline/nowcast.py was fitted on one week of summer cases.
+# Refitting it for other seasons cannot be done by backfilling: the GFS archive on
+# S3 only retains a couple of weeks, so cases have to be collected as they happen.
+# This scores a few recent days and appends the contingency counts to
+# verify/archive.jsonl, which builds up a year-round sample over time.
+#
+# Deliberately separate from the hourly site build: this must never be able to delay
+# or fail a deploy.
+
+on:
+  schedule:
+    - cron: "40 5 * * 1"   # Mondays, well clear of the hourly build
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "First case date (YYYY-MM-DD). Defaults to 9 days ago."
+        required: false
+      days:
+        description: "How many days of cases to score."
+        required: false
+        default: "7"
+
+concurrency:
+  group: verify
+  cancel-in-progress: false   # never abandon a partly-written archive
+
+permissions:
+  contents: write   # commits the archive back
+
+jobs:
+  accumulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Score recent cases
+        env:
+          NOWCAST_CORRECT: "0"   # score the raw model, so rows stay comparable
+        run: |
+          # GFS is retained ~2 weeks and observations lag ~20 min, so a window that
+          # ended a couple of days ago is safely complete on both sides.
+          START="${{ inputs.start }}"
+          if [ -z "$START" ]; then START=$(date -u -d '9 days ago' +%Y-%m-%d); fi
+          DAYS="${{ inputs.days }}"; DAYS="${DAYS:-7}"
+          echo "scoring $DAYS day(s) from $START"
+          python verify/run.py \
+            --start "$START" --days "$DAYS" --every 12 \
+            --leads 30,90,150,210,270 --thresholds 5,10,20,30 \
+            --sweep-crossover 300,330,360,420 \
+            --archive verify/archive.jsonl
+
+      - name: Summarise the archive
+        run: |
+          python verify/archive.py
+          python verify/archive.py --by season
+
+      - name: Commit new cases
+        run: |
+          if git diff --quiet -- verify/archive.jsonl; then
+            echo "no new cases"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add verify/archive.jsonl
+          git commit -m "Add verification cases through $(date -u +%Y-%m-%d)
+
+          Appended by .github/workflows/verify.yml. Counts only; refit with
+          \`python verify/archive.py\`."
+          git push

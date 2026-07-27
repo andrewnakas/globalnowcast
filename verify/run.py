@@ -140,6 +140,9 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="write per-case JSON here")
     ap.add_argument("--sweep-crossover", default=None,
                     help="also score these BLEND_CROSSOVER_MIN values, e.g. 180,270,360")
+    ap.add_argument("--archive", default=None, metavar="PATH",
+                    help="append compact per-region counts to this JSONL archive, "
+                         "skipping cases already in it (see verify/archive.py)")
     args = ap.parse_args()
 
     global SWEEP_CROSSOVERS, MODELS
@@ -162,9 +165,19 @@ def main() -> int:
     records = []
     n = 0
 
+    done = set()
+    if args.archive and Path(args.archive).exists():
+        for line in Path(args.archive).read_text().splitlines():
+            if line.strip():
+                done.add(json.loads(line)["t0"])
+        print(f"archive holds {len(done)} case(s) already")
+
     hours = args.days * 24
     for offset in range(0, hours, args.every):
         t0 = start + timedelta(hours=offset)
+        if t0.isoformat() in done:
+            print(f"case {t0:%Y-%m-%d %H:%MZ}: already archived, skipping")
+            continue
         print(f"case {t0:%Y-%m-%d %H:%MZ}")
         case = run_case(session, t0, leads)
         if not case:
@@ -173,17 +186,27 @@ def main() -> int:
         for lead, valid, fields, truth, mask in case:
             for model, field in fields.items():
                 for thr in thresholds:
+                    per_region = {}
                     for region, sel in (("global", mask),
                                         ("tropics", mask & TROPICS[:, None]),
                                         ("midlat", mask & ~TROPICS[:, None])):
                         c = contingency(field, truth, thr, sel)
+                        per_region[region] = c
                         key = (model, lead, thr, region)
                         pooled[key] = [a + b for a, b in zip(pooled[key], c)]
                     fss_acc[(model, lead, thr)].append(
                         fss(field, truth, thr, args.fss_window, mask))
-                    records.append({"t0": t0.isoformat(), "lead_min": lead,
-                                    "model": model, "threshold": thr,
-                                    **scores(*contingency(field, truth, thr, mask))})
+                    rec = {"t0": t0.isoformat(), "lead_min": lead,
+                           "model": model, "threshold": thr,
+                           **scores(*per_region["global"])}
+                    if args.archive:
+                        # Counts pool exactly across cases, so the archive keeps
+                        # those rather than derived ratios - and keeps them per
+                        # region so a latitude-dependent refit stays possible.
+                        rec = {"t0": t0.isoformat(), "lead_min": lead,
+                               "model": model, "threshold": thr,
+                               "counts": {r: v[:3] for r, v in per_region.items()}}
+                    records.append(rec)
             print(f"  +{lead:3d}m  " + "  ".join(
                 f"{m}={csi(*contingency(fields[m], truth, 20.0, mask)[:3]):.4f}"
                 for m in MODELS))
@@ -224,6 +247,20 @@ def main() -> int:
     if args.out:
         Path(args.out).write_text(json.dumps(records, indent=1))
         print(f"\nwrote {len(records)} records to {args.out}")
+
+    if args.archive:
+        # One line per case keeps appends atomic and the file readable in a diff.
+        by_case = defaultdict(list)
+        for r in records:
+            by_case[r["t0"]].append({k: r[k] for k in
+                                     ("lead_min", "model", "threshold", "counts")})
+        path = Path(args.archive)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as fh:
+            for t0 in sorted(by_case):
+                fh.write(json.dumps({"t0": t0, "records": by_case[t0]},
+                                    separators=(",", ":")) + "\n")
+        print(f"\nappended {len(by_case)} case(s) to {args.archive}")
     return 0
 
 
