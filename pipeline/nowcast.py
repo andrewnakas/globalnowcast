@@ -40,8 +40,10 @@ WRAP_PAD = 96
 # Handover lead. The crossover depends on how heavy the rain is: at 20 dBZ the model
 # catches up around +4.5 h, but at the light thresholds the map actually renders it
 # never does, so handing over early visibly floods the picture with model drizzle.
-# 330 min is the compromise that scores best across 5/10/20/30 dBZ together.
-BLEND_CROSSOVER_MIN = 330.0
+# Fitted over 14 cases across a week at 5/10/20/30 dBZ: 360 min maximises mean CSI
+# and is the shortest handover that never loses to pure advection at any lead or
+# threshold. It is a real interior optimum (360 > 390 > 420 > 480).
+BLEND_CROSSOVER_MIN = 360.0
 BLEND_TAU_MIN = 60.0
 
 # Below this lead the observations are so far ahead of the model that letting any

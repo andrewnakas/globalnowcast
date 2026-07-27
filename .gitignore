@@ -13,6 +13,7 @@ ml/shards/
 *.hdf5
 *.HDF5
 verify/cache/
+verify/out*.json
 ml/model/*.pt
 ml/model/*.ckpt
 ml/model/*.onnx
