@@ -3,6 +3,10 @@
 Scores the shipped nowcast against later observations. Nothing here reimplements
 pipeline logic — it imports `pipeline/` directly, so what is measured is what runs.
 
+For how these numbers relate (and mostly don't) to published nowcasting benchmarks,
+see [BENCHMARKS.md](BENCHMARKS.md). Short version: every public leaderboard is
+regional radar at 1–2 km, and coarse grids inflate CSI, so ours are not comparable.
+
 ```bash
 python verify/test_metrics.py                        # unit checks, no network
 python verify/run.py --start 2026-07-27 --days 1 --every 24 --thresholds 20

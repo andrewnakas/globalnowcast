@@ -21,6 +21,7 @@ Notes on fairness, both of which flatter GFS if you get them wrong:
 import argparse
 import json
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -46,14 +47,27 @@ TROPICS = np.abs(obs.GFS_LAT) < 23.5
 SWEEP_CROSSOVERS: tuple[float, ...] = ()
 
 
-def _cached(name: str, build):
-    """Fetches are slow and parameter sweeps repeat them; keep them on disk."""
+def _cached(name: str, build, attempts: int = 3):
+    """Fetches are slow and parameter sweeps repeat them; keep them on disk.
+
+    Retries transient S3 failures. A long sweep makes hundreds of requests, so a
+    single dropped connection is close to certain over a full run and must not
+    throw away everything scored so far.
+    """
     CACHE.mkdir(exist_ok=True)
     path = CACHE / f"{name}.npz"
     if path.exists():
         with np.load(path) as z:
             return {k: z[k] for k in z.files}
-    data = build()
+    for attempt in range(attempts):
+        try:
+            data = build()
+            break
+        except Exception as e:  # noqa: BLE001 - retry anything the network throws
+            if attempt == attempts - 1:
+                print(f"  {name}: giving up after {attempts} tries ({e})")
+                return None
+            time.sleep(2 * (attempt + 1))
     if data is not None:
         np.savez_compressed(path, **data)
     return data
@@ -179,7 +193,11 @@ def main() -> int:
             print(f"case {t0:%Y-%m-%d %H:%MZ}: already archived, skipping")
             continue
         print(f"case {t0:%Y-%m-%d %H:%MZ}")
-        case = run_case(session, t0, leads)
+        try:
+            case = run_case(session, t0, leads)
+        except Exception as e:  # noqa: BLE001 - one bad case must not lose the rest
+            print(f"  failed, skipping: {e}")
+            continue
         if not case:
             continue
         n += 1
