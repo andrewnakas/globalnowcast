@@ -31,6 +31,11 @@ def main() -> int:
     ap.add_argument("--tiles", default="ml/tiles")
     ap.add_argument("--val-months", type=int, default=8)
     ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--max-samples", type=int, default=4000,
+                    help="cap the held-out set. The full 48k dataset does not fit "
+                         "alongside a running trainer on a 16 GB box, and a few "
+                         "thousand samples already resolve CSI far below the "
+                         "run-to-run spread.")
     args = ap.parse_args()
 
     paths = sorted(Path(args.tiles).glob("*.npz"))
@@ -38,6 +43,11 @@ def main() -> int:
     step = max(1, len(months) // max(args.val_months, 1))
     val_months = set(months[::step][:args.val_months])
     ds = Tiles(paths, val_months, exclude=False)
+    if args.max_samples and len(ds.x) > args.max_samples:
+        # Stride rather than truncate, so the subset still spans every held-out month
+        # instead of just the earliest shards.
+        keep = np.linspace(0, len(ds.x) - 1, args.max_samples).astype(int)
+        ds.x, ds.y, ds.h = ds.x[keep], ds.y[keep], ds.h[keep]
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     ck = torch.load(args.ckpt, map_location=dev, weights_only=False)

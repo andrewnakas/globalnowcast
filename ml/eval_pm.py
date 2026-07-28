@@ -52,6 +52,11 @@ def main() -> int:
     ap.add_argument("--ckpt", default="ml/model/nowcast.pt")
     ap.add_argument("--tiles", default="ml/tiles")
     ap.add_argument("--val-months", type=int, default=8)
+    ap.add_argument("--ref", type=int, default=2000,
+                    help="training samples used to fit the reference distribution")
+    ap.add_argument("--max-samples", type=int, default=4000,
+                    help="cap the held-out set; the full 48k does not fit alongside "
+                         "a running trainer on a 16 GB box")
     args = ap.parse_args()
 
     paths = sorted(Path(args.tiles).glob("*.npz"))
@@ -60,7 +65,11 @@ def main() -> int:
     val_months = set(months[::step][:args.val_months])
 
     val = Tiles(paths, val_months, exclude=False)
+    if args.max_samples and len(val.x) > args.max_samples:
+        keep = np.linspace(0, len(val.x) - 1, args.max_samples).astype(int)
+        val.x, val.y, val.h = val.x[keep], val.y[keep], val.h[keep]
     train = Tiles(paths, val_months, exclude=True)
+    train.y = train.y[:args.ref]  # only the reference distribution is needed
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     ck = torch.load(args.ckpt, map_location=dev, weights_only=False)
