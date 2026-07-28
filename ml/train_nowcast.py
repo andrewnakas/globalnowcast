@@ -42,23 +42,40 @@ def from_u8(a):
 class Tiles(Dataset):
     """Loads whole shards into memory; the full set is a few GB of uint8."""
 
-    def __init__(self, paths, months=None, exclude=False):
+    def __init__(self, paths, months=None, exclude=False, limit=None):
         xs, ys, hs = [], [], []
+        kept = 0
         for p in paths:
             with np.load(p) as z:
                 if "h" not in z.files:
                     continue
-                x, y, h, t = z["x"], z["y"], z["h"], z["t"]
-                assert len(x) == len(y) == len(h) == len(t), f"{p} is misaligned"
+                t = z["t"]
+                # Decide which rows are wanted from the timestamps alone, then read
+                # only those. Loading a whole shard and filtering afterwards needs the
+                # full 48k set resident at once, which is enough to be OOM-killed
+                # alongside a running trainer on a 16 GB box.
                 if months is not None:
                     m = np.array([s[:7] in months for s in t])
                     if exclude:
                         m = ~m
-                    x, y, h = x[m], y[m], h[m]
+                    if not m.any():
+                        continue
+                else:
+                    m = slice(None)
+                x, y, h = z["x"][m], z["y"][m], z["h"][m]
+                assert len(x) == len(y) == len(h), f"{p} is misaligned"
+                # Note: this takes the first `limit` rows in shard order, so a
+                # capped set does not span every held-out month evenly. Fine for a
+                # quick read, but a headline number should be run uncapped.
+                if limit is not None and kept + len(x) > limit:
+                    x, y, h = x[:limit - kept], y[:limit - kept], h[:limit - kept]
                 if len(x):
                     xs.append(x)
                     ys.append(y)
                     hs.append(h)
+                    kept += len(x)
+            if limit is not None and kept >= limit:
+                break
         if not xs:
             raise SystemExit("no samples matched; check --tiles and the month split")
         self.x = np.concatenate(xs)

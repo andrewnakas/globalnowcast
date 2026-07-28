@@ -52,9 +52,9 @@ def main() -> int:
     ap.add_argument("--ckpt", default="ml/model/nowcast.pt")
     ap.add_argument("--tiles", default="ml/tiles")
     ap.add_argument("--val-months", type=int, default=8)
-    ap.add_argument("--ref", type=int, default=2000,
+    ap.add_argument("--ref", type=int, default=600,
                     help="training samples used to fit the reference distribution")
-    ap.add_argument("--max-samples", type=int, default=4000,
+    ap.add_argument("--max-samples", type=int, default=1500,
                     help="cap the held-out set; the full 48k does not fit alongside "
                          "a running trainer on a 16 GB box")
     args = ap.parse_args()
@@ -64,12 +64,21 @@ def main() -> int:
     step = max(1, len(months) // max(args.val_months, 1))
     val_months = set(months[::step][:args.val_months])
 
-    val = Tiles(paths, val_months, exclude=False)
-    if args.max_samples and len(val.x) > args.max_samples:
-        keep = np.linspace(0, len(val.x) - 1, args.max_samples).astype(int)
-        val.x, val.y, val.h = val.x[keep], val.y[keep], val.h[keep]
-    train = Tiles(paths, val_months, exclude=True)
-    train.y = train.y[:args.ref]  # only the reference distribution is needed
+    val = Tiles(paths, val_months, exclude=False, limit=args.max_samples)
+    # Only the target distribution is needed, so read it straight from a couple of
+    # shards. Constructing a full Tiles over the training months would load ~43k
+    # sequences first and be killed on a 16 GB box before it could be trimmed.
+    ref_chunks, got = [], 0
+    for p in paths:
+        with np.load(p) as z:
+            keep_m = np.array([s[:7] not in val_months for s in z["t"]])
+            if keep_m.any():
+                take = z["y"][keep_m][:args.ref - got]
+                ref_chunks.append(take)
+                got += len(take)
+        if got >= args.ref:
+            break
+    ref_u8 = np.concatenate(ref_chunks)
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     ck = torch.load(args.ckpt, map_location=dev, weights_only=False)
@@ -83,7 +92,7 @@ def main() -> int:
     hrrr = torch.from_numpy(from_u8(val.h))
 
     # Calibrate on training observations only.
-    ref = torch.from_numpy(from_u8(train.y[:2000]))
+    ref = torch.from_numpy(from_u8(ref_u8))
     matched = probability_match(pred, ref)
 
     t, m = truth.numpy(), np.ones_like(truth.numpy(), bool)
