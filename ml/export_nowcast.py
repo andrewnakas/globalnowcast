@@ -50,7 +50,10 @@ def main() -> int:
     # that needs padding. 100x100 pads by 4, so the padding is traced in.
     radar = torch.zeros(1, IN_FRAMES, 100, 100)
     hrrr = torch.zeros(1, OUT_FRAMES, 100, 100)
-    dyn = {2: "h", 3: "w"}
+    # Batch as well as height and width. Fixing batch at 1 exports cleanly and only
+    # fails when something tries to run more than one sample - which the hourly job
+    # would, and which no shape test catches if every test uses batch 1.
+    dyn = {0: "batch", 2: "h", 3: "w"}
     kw = dict(input_names=["radar", "hrrr"], output_names=["forecast"],
               dynamic_axes={"radar": dyn, "hrrr": dyn, "forecast": dyn},
               opset_version=args.opset)
@@ -72,15 +75,17 @@ def main() -> int:
     import onnxruntime as ort
     sess = ort.InferenceSession(str(out), providers=["CPUExecutionProvider"])
     rng = np.random.default_rng(0)
-    for h, w in ((100, 100), (144, 208)):
-        r = rng.uniform(-30, 60, (1, IN_FRAMES, h, w)).astype(np.float32)
-        f = rng.uniform(-30, 60, (1, OUT_FRAMES, h, w)).astype(np.float32)
+    # Vary batch as well as shape: an export with batch pinned to 1 passes every
+    # single-sample check and then fails the first time anything runs a real batch.
+    for b, h, w in ((1, 100, 100), (8, 100, 100), (1, 144, 208), (4, 96, 152)):
+        r = rng.uniform(-30, 60, (b, IN_FRAMES, h, w)).astype(np.float32)
+        f = rng.uniform(-30, 60, (b, OUT_FRAMES, h, w)).astype(np.float32)
         got = sess.run(["forecast"], {"radar": r, "hrrr": f})[0]
         with torch.no_grad():
             want = model(torch.from_numpy(r), torch.from_numpy(f)).numpy()
         err = float(np.abs(got - want).max())
         status = "ok" if err < TOL else "MISMATCH"
-        print(f"  {h}x{w}: max |onnx - torch| = {err:.2e}  {status}")
+        print(f"  b{b} {h}x{w}: max |onnx - torch| = {err:.2e}  {status}")
         if err >= TOL:
             return 1
 
