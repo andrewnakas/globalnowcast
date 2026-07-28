@@ -45,6 +45,28 @@ smaller dataset; base=32 on the full set reaches 0.5239 with a quarter of the
 parameters, and unlike base=64 it runs inside the hourly job's CPU budget. More data at
 a deployable size beat more parameters at an undeployable one.
 
+## Why the sub-hourly work is the honest next step
+
+Persistence decay measured on the 10-minute dataset, at 1 mm/h:
+
+| lead | persistence CSI |
+|------|-----------------|
+| +10 min | 0.5368 |
+| +30 min | 0.3563 |
+| +60 min | 0.2682 |
+| +90 min | 0.2189 |
+| +180 min | 0.1413 |
+
+At the hourly cadence this project has been working in, persistence is already down to
+0.27 by the first forecast step. Published nowcasting work reports at +30 to +90
+minutes, where 0.36 to 0.22 of the field still survives - a materially easier and
+different problem, which is why comparing our 0.51 to their numbers means nothing.
+
+Setting expectations before that work runs: DGMR-class models report roughly CSI
+0.4-0.6 at 1 mm/h at +30 minutes on 1 km radar grids. A sub-hourly model here should
+land in a similar range, and that would not be a leaderboard win - it would be the
+first like-for-like comparison this project has been able to make at all.
+
 ## How much headroom is actually left
 
 Consecutive *truth* frames agree with each other at CSI 0.39-0.42 at 1 mm/h - that is
