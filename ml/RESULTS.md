@@ -4,6 +4,25 @@ Trained on MRMS radar with HRRR as a side input, both from the dynamical.org cat
 Verified against held-out radar, split by month so no near-duplicate hours leak between
 train and validation.
 
+## The shipped configuration
+
+Model plus probability matching from stored per-lead quantile tables - the actual
+deployable path, fitted on training months and never touching the truth at inference:
+
+| threshold | model + PM | HRRR | gain |
+|-----------|-----------|------|------|
+| 1 mm/h | 0.5038 | 0.4125 | **+22.1%** |
+| 4 mm/h | 0.3441 | 0.2388 | **+44.1%** |
+| 8 mm/h | 0.2522 | 0.1542 | **+63.6%** |
+
+Wet-area ratio against radar: **1.08**, against 1.53 for the raw model. Reproduced
+across two seeds, 0.5239 and 0.5249.
+
+PM is not optional here. Raw output over-forecasts light rain by 1.53x and produces
+only 41% of the heavy rain actually present - it hedges toward drizzle, which the
+weighted loss encourages and which threshold-averaged CSI hides entirely. See
+[DEPLOY.md](DEPLOY.md).
+
 ## Headline
 
 48,316 sequences, base=32 - the largest size that fits the hourly job. 1,500 held-out

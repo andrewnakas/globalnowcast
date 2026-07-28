@@ -202,5 +202,7 @@ def probability_match(pred, reference):
 def quantile_table(field, n=1024):
     """Quantiles of `field`, as a compact reference distribution for probability_match."""
     flat = torch.sort(field.reshape(-1)).values
-    idx = torch.linspace(0, flat.numel() - 1, n, device=flat.device).round().long()
-    return flat[idx]
+    # .long() truncates and .clamp guards the top end: rounding can land one past the
+    # last index, which is the same off-by-one already fixed in probability_match.
+    idx = torch.linspace(0, flat.numel() - 1, n, device=flat.device)
+    return flat[idx.long().clamp_(max=flat.numel() - 1)]
