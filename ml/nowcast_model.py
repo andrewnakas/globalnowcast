@@ -39,6 +39,18 @@ def _block(cin, cout):
     )
 
 
+def _match(up, skip):
+    """Crop an upsampled tensor to its skip connection's height and width.
+
+    Sizes agree whenever the input is a multiple of 8, which the forward pass ensures
+    by padding. But torch.onnx.export traces ConvTranspose2d's output size as a
+    constant from the dummy input, so an exported graph fails at any other shape with
+    a concat dimension mismatch. Cropping to the skip is a no-op in eager mode and
+    makes the export honour its dynamic axes.
+    """
+    return up[..., :skip.shape[-2], :skip.shape[-1]]
+
+
 class GatedFusion(nn.Module):
     """Learned gate on a skip connection, instead of a plain concatenate.
 
@@ -112,10 +124,13 @@ class NowcastUNet(nn.Module):
         """
         h0, w0 = radar.shape[-2:]
         ph, pw = (-h0) % POOL_DIVISOR, (-w0) % POOL_DIVISOR
-        if ph or pw:
-            radar = nn.functional.pad(radar, (0, pw, 0, ph), mode="reflect")
-            if hrrr is not None:
-                hrrr = nn.functional.pad(hrrr, (0, pw, 0, ph), mode="reflect")
+        # Pad unconditionally, even when the amount is zero. `if ph or pw` reads
+        # better but is a fixed decision under tracing: exporting at a shape that
+        # happens to need no padding drops the Pad nodes from the graph entirely, and
+        # the result then fails on every shape that does need them.
+        radar = nn.functional.pad(radar, (0, pw, 0, ph), mode="reflect")
+        if hrrr is not None:
+            hrrr = nn.functional.pad(hrrr, (0, pw, 0, ph), mode="reflect")
 
         x = radar if hrrr is None else torch.cat([radar, hrrr], 1)
         e1 = self.enc1(x)
@@ -123,13 +138,13 @@ class NowcastUNet(nn.Module):
         e3 = self.enc3(self.pool(e2))
         b = self.bott(self.pool(e3))
         if self.gated:
-            d3 = self.dec3(self.g3(self.up3(b), e3))
-            d2 = self.dec2(self.g2(self.up2(d3), e2))
-            d1 = self.dec1(self.g1(self.up1(d2), e1))
+            d3 = self.dec3(self.g3(_match(self.up3(b), e3), e3))
+            d2 = self.dec2(self.g2(_match(self.up2(d3), e2), e2))
+            d1 = self.dec1(self.g1(_match(self.up1(d2), e1), e1))
         else:
-            d3 = self.dec3(torch.cat([self.up3(b), e3], 1))
-            d2 = self.dec2(torch.cat([self.up2(d3), e2], 1))
-            d1 = self.dec1(torch.cat([self.up1(d2), e1], 1))
+            d3 = self.dec3(torch.cat([_match(self.up3(b), e3), e3], 1))
+            d2 = self.dec2(torch.cat([_match(self.up2(d3), e2), e2], 1))
+            d1 = self.dec1(torch.cat([_match(self.up1(d2), e1), e1], 1))
         residual = self.head(d1)
         if hrrr is not None and self.use_hrrr:
             out = hrrr + residual
