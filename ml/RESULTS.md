@@ -6,18 +6,25 @@ train and validation.
 
 ## Headline
 
-18,551 sequences, 1,236 held-out samples across 10 months, base=64:
+48,316 sequences, base=32 - the largest size that fits the hourly job. 1,500 held-out
+samples, months held out so no near-duplicate hours leak between train and validation:
 
 | threshold | model | + PM | HRRR | persistence |
 |-----------|-------|------|------|-------------|
-| 1 mm/h | **0.5102** | 0.5028 | 0.4395 | 0.2019 |
-| 2 mm/h | 0.3947 | 0.3977 | 0.3122 | 0.1152 |
-| 4 mm/h | 0.2355 | **0.2946** | 0.1747 | 0.0568 |
-| 8 mm/h | 0.1521 | **0.2319** | 0.1337 | 0.0262 |
+| 1 mm/h | **0.5055** | 0.5031 | 0.4125 | 0.2143 |
+| 2 mm/h | **0.4169** | 0.4146 | 0.3164 | 0.1441 |
+| 4 mm/h | 0.3255 | **0.3378** | 0.2388 | 0.0995 |
+| 8 mm/h | 0.1790 | **0.2421** | 0.1542 | 0.0615 |
 
-By lead at 1 mm/h: 0.543 / 0.518 / 0.521 / 0.487 / 0.502 / 0.499 for +1 h to +6 h,
-against HRRR's 0.446 / 0.433 / 0.437 / 0.428 / 0.456 / 0.439. Ahead at every lead, and
-five times persistence by +6 h.
+That is +22.5% / +31.8% / +36.3% / +16.1% over HRRR raw, and +22.0% / +31.0% / +41.5%
+/ +57.0% with probability matching. By lead at 1 mm/h the model runs +28.5% at +1 h
+easing to +18.0% at +6 h, ahead of HRRR everywhere and about four times persistence by
++6 h.
+
+The shippable size is also the best size. An earlier base=64 run peaked at 0.5102 on a
+smaller dataset; base=32 on the full set reaches 0.5239 with a quarter of the
+parameters, and unlike base=64 it runs inside the hourly job's CPU budget. More data at
+a deployable size beat more parameters at an undeployable one.
 
 ## Read this before quoting a number
 
@@ -36,6 +43,7 @@ measured.
 | change | effect | verdict |
 |--------|--------|---------|
 | 5x more data (3.3k → 18.5k) | +0.039 | real, ~2.5x the spread |
+| 2.6x more again (18.5k → 48k) | +0.013 | real but smaller; returns diminishing |
 | probability matching, 8 mm/h | +0.080 | real and large |
 | probability matching, 4 mm/h | +0.059 | real |
 | gated skip fusion | −0.002 | inside the noise |
@@ -47,22 +55,25 @@ size, does not.
 
 ## Probability matching does the heavy-rain work, not the network
 
-At 8 mm/h the raw model is *worse* than HRRR at short leads - 0.111 against 0.133 at
-+1 h. It finds the rain but paints it too broadly: frequency bias 1.54 with POD 0.857
-against HRRR's 1.09 and 0.640.
+The model finds far more rain than HRRR but paints it too broadly - frequency bias 1.53
+with POD 0.849, against HRRR's 0.99 and 0.580. Replacing its intensity distribution
+with the observed climatology, fitted per lead, fixes the footprint while keeping the
+placement, and at 8 mm/h that is worth more than everything the network does:
 
-Replacing the model's intensity distribution with the observed climatology, fitted per
-lead, fixes the footprint while keeping the placement:
+| threshold | model | + PM | HRRR |
+|-----------|-------|------|------|
+| 1 mm/h | 0.5055 | 0.5031 | 0.4125 |
+| 4 mm/h | 0.3255 | **0.3378** | 0.2388 |
+| 8 mm/h | 0.1790 | **0.2421** | 0.1542 |
 
-| lead | model | + PM | HRRR |
-|------|-------|------|------|
-| +1h | 0.111 | 0.225 | 0.133 |
-| +3h | 0.130 | 0.237 | 0.128 |
-| +6h | 0.158 | 0.203 | 0.135 |
+PM adds 35% at 8 mm/h and 4% at 4 mm/h, for about half a percent given up at 1 mm/h.
+**The network contributes placement; PM contributes footprint.** Quoting the combined
++57% at 8 mm/h as a property of the model would be misleading - most of it is the
+distribution correction.
 
-Roughly 1.7x HRRR at every lead. **The network contributes placement; PM contributes
-footprint.** Saying "the model beats HRRR by 70% on heavy rain" without that split
-would be misleading.
+On the smaller datasets PM was a straight trade, buying the heavy end at the cost of
+the light. With 48k sequences it is close to free, and the raw model no longer loses
+to HRRR at 8 mm/h before correction the way it used to.
 
 Fit per lead, not pooled: the pooled fit dips to 0.4518 at +3 h at 1 mm/h where
 per-lead holds 0.4993, because one distribution across six hours is wrong for the
@@ -80,16 +91,17 @@ frame. Measured on a 521x1440 global grid:
 | 48 | 2.09M | 1.66 | too slow |
 | 64 | 3.71M | 2.39 | too slow |
 
-**Every headline above is base=64 and cannot deploy.** They stand as an upper bound on
-what this architecture and data can do; the shippable candidate is base=32 and is
-being trained on the combined ~48,000-sequence dataset. Re-check with
+The headline model is base=32 and fits, at 0.75 s per frame. This was worth measuring
+early and was not: an entire night of tuning went into base=64 before anyone checked
+whether it could run in the job it was meant for. It could not. Re-check with
 `python ml/bench_cpu.py` before shipping anything.
 
 ## Reproducing
 
 ```bash
 python ml/data/build_tiles.py --tiles 900 --out ml/tiles_big   # ~3 seq/s, network-bound
-python ml/train_nowcast.py --tiles ml/tiles_big --base 32 --epochs 70 --val-months 10
+python ml/train_nowcast.py --tiles ml/tiles_all --base 32 --epochs 70 --val-months 12 \
+    --resume     # checkpoints every epoch to <out>.last; --resume continues from it
 python ml/eval_nowcast.py --ckpt ml/model/nowcast.pt           # per lead and threshold
 python ml/eval_pm_lead.py --ckpt ml/model/nowcast.pt           # with probability matching
 python ml/bench_cpu.py                                         # will it run in the hourly job
