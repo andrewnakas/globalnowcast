@@ -119,3 +119,35 @@ def csi_torch(pred, target, thresh):
     hits = (p & t).sum().float()
     denom = (p | t).sum().float()
     return hits / denom if denom > 0 else torch.tensor(float("nan"))
+
+
+def probability_match(pred, reference):
+    """Rewrite `pred`'s intensity distribution to match `reference`, keeping its order.
+
+    A weighted loss buys light-rain skill by over-painting rain: the trained model
+    scores +31% against HRRR at 1 mm/h but runs a frequency bias of 1.34, and at
+    8 mm/h that costs more than it gains. Probability matching separates the two
+    questions. The model decides *where* it rains, which is what it is good at; the
+    intensity distribution is then replaced wholesale by the reference climatology, so
+    the bias is 1.0 by construction at every threshold.
+
+    This is the classical PM used with ensemble QPF, and the approach the 2025 GRL
+    probability-matching-loss paper builds on. Applied post hoc it needs no retraining.
+
+    `reference` supplies the target distribution - the observed field when calibrating,
+    or a stored quantile table at inference.
+    """
+    flat = pred.reshape(-1)
+    order = torch.argsort(torch.argsort(flat))  # rank of each cell within pred
+    ref = torch.sort(reference.reshape(-1)).values
+    if ref.numel() != flat.numel():  # resample the reference onto pred's length
+        idx = torch.linspace(0, ref.numel() - 1, flat.numel(), device=ref.device)
+        ref = ref[idx.long().clamp_(max=ref.numel() - 1)]
+    return ref[order].reshape(pred.shape)
+
+
+def quantile_table(field, n=1024):
+    """Quantiles of `field`, as a compact reference distribution for probability_match."""
+    flat = torch.sort(field.reshape(-1)).values
+    idx = torch.linspace(0, flat.numel() - 1, n, device=flat.device).round().long()
+    return flat[idx]
