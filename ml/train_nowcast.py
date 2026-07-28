@@ -116,6 +116,12 @@ def main() -> int:
                     help="gated skip fusion; lets the net weight radar against HRRR "
                          "per cell instead of a fixed concatenate")
     ap.add_argument("--wet-weight", type=float, default=8.0)
+    ap.add_argument("--ema", type=float, default=0.0, metavar="DECAY",
+                    help="track an exponential moving average of the weights, e.g. "
+                         "0.99. Validation CSI oscillates ~0.012 between adjacent "
+                         "epochs and that is the model moving, not measurement noise "
+                         "- a 4x larger validation set made it worse, not better. "
+                         "Averaging weights smooths the oscillation itself.")
     ap.add_argument("--val-months", type=int, default=6)
     ap.add_argument("--out", default="ml/model/nowcast.pt")
     args = ap.parse_args()
@@ -149,6 +155,13 @@ def main() -> int:
     tl = DataLoader(train, batch_size=args.batch, shuffle=True, drop_last=True)
     vl = DataLoader(val, batch_size=args.batch)
 
+    ema = None
+    if args.ema:
+        import copy
+        ema = copy.deepcopy(model).eval()
+        for p in ema.parameters():
+            p.requires_grad_(False)
+
     loss0, csi0 = evaluate(model, vl, dev)
     print(f"before training: loss {loss0:.3f}  model CSI {csi0[0]:.4f}  "
           f"hrrr {csi0[1]:.4f}  persistence {csi0[2]:.4f}")
@@ -165,12 +178,20 @@ def main() -> int:
             opt.step()
             run += float(loss) * len(x)
             n += len(x)
-        vloss, csi = evaluate(model, vl, dev)
+            if ema is not None:
+                with torch.no_grad():
+                    for a, b in zip(ema.parameters(), model.parameters()):
+                        a.lerp_(b.detach(), 1.0 - args.ema)
+                    for a, b in zip(ema.buffers(), model.buffers()):
+                        a.copy_(b)
+        # Score whichever set of weights would actually be shipped.
+        scored = ema if ema is not None else model
+        vloss, csi = evaluate(scored, vl, dev)
         flag = ""
         if csi[0] > best:
             best = csi[0]
             Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-            torch.save({"state_dict": model.state_dict(), "base": args.base,
+            torch.save({"state_dict": scored.state_dict(), "base": args.base,
                         "gated": args.gated,
                         "val_csi": csi[0]}, args.out)
             flag = "  *saved"
