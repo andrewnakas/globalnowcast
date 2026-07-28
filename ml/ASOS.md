@@ -43,6 +43,33 @@ apart, which invents exactly the spatial structure the model is supposed to pred
 And it is hourly accumulation, not instantaneous rate. The sub-hourly work is aimed at
 10-minute steps, which ASOS cannot supervise at all.
 
+## First result: radar and gauges disagree a lot
+
+Running `verify/run_asos.py` over three hours, ~2,490 stations each:
+
+| threshold | CSI | POD | FAR | bias |
+|-----------|-----|-----|-----|------|
+| 0.2 mm | 0.2655 | 0.681 | 0.697 | 2.25 |
+| 1 mm | 0.2075 | 0.543 | 0.749 | 2.16 |
+| 4 mm | 0.0870 | 0.250 | 0.882 | 2.12 |
+| 8 mm | 0.1379 | 0.286 | 0.789 | 1.36 |
+
+That is MRMS against gauges, with no model involved. Radar reports rain over about
+2.2x the area gauges measure it, and at 4 mm nearly nine in ten radar exceedances have
+no gauge behind them.
+
+Some of that gap is the comparison rather than the instruments - a gauge is a funnel a
+few inches across and a radar cell is 2 km, so a cell can legitimately average above a
+threshold that the one point inside it never reaches. But the size of it is a caution:
+**a radar-trained model cannot score better against gauges than its own training
+target does.** CSI 0.27 is the ceiling for anything learned from MRMS, whatever it
+scores against MRMS itself.
+
+This does not invalidate the +22.7% over HRRR. That comparison is model against model
+on identical truth, and it stands. What it does mean is that "CSI 0.51" is a statement
+about agreement with radar, not about how much rain the forecast gets right at the
+ground, and those are further apart than they look.
+
 ## How to use it
 
 Score the existing model's +1 h forecast at station locations, against `p01m`, and
