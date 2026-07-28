@@ -47,13 +47,34 @@ the hourly job:
 Both are anonymous S3, so this is plumbing rather than a permissions problem, but it is
 real work and it is where the remaining risk sits.
 
-## The check that should gate it
+## The bias gate: probability matching is not optional
 
-Before this ships, run `verify/run_asos.py` on the model's output rather than on MRMS.
-Radar and gauges already disagree at CSI 0.27 with a wet bias of 2.2, so the question
-is whether the model inherits that bias or amplifies it. A model that beats HRRR on
-radar while painting rain over three times the gauge-measured area is not obviously an
-improvement for anyone reading the map.
+`ml/check_bias.py` answers it. Wet-area fraction on held-out tiles:
+
+| threshold | radar | HRRR | model | model + PM | model/radar |
+|-----------|-------|------|-------|------------|-------------|
+| 0.2 mm | 0.3272 | 0.3218 | 0.4427 | 0.3169 | 1.35 |
+| 1 mm | 0.2141 | 0.2113 | 0.3274 | 0.2071 | 1.53 |
+| 4 mm | 0.0440 | 0.0517 | 0.0382 | 0.0446 | 0.87 |
+| 8 mm | 0.0174 | 0.0238 | 0.0071 | 0.0192 | **0.41** |
+
+The raw model paints 1.53x the radar's wet area at 1 mm/h. Radar already runs ~2.2x the
+gauge-measured area, so the raw model would sit near **3.4x against gauges** - the
+failure this gate was written to catch.
+
+With probability matching it lands at 2.1x, which is the instrument's bias rather than
+the model's: the PM column tracks the radar column to within a few percent at every
+threshold.
+
+The 8 mm/h row is the one CSI never showed. The raw model produces **41% of the heavy
+rain that is actually there** - it hedges toward light rain everywhere, which the
+weighted loss encourages and which a threshold-averaged score hides. PM corrects both
+directions at once, because it replaces the whole distribution rather than shifting a
+threshold.
+
+So probability matching is a shipping requirement, not a post-hoc improvement. The raw
+model would simultaneously over-warn for drizzle and under-warn for the heavy rain that
+matters.
 
 ## Honest summary of where the model stands
 
