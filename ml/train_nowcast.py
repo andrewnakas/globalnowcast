@@ -91,6 +91,19 @@ class Tiles(Dataset):
                 torch.from_numpy(from_u8(self.y[i])))
 
 
+def _save(obj, path):
+    """Write a checkpoint atomically.
+
+    torch.save straight onto the destination leaves a truncated file if the process
+    dies mid-write, which is exactly when a checkpoint matters most. Writing beside it
+    and renaming means the old checkpoint stays intact until the new one is complete.
+    """
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(obj, tmp)
+    tmp.replace(path)
+
+
 def all_months(paths):
     out = set()
     for p in paths:
@@ -141,6 +154,9 @@ def main() -> int:
                          "Averaging weights smooths the oscillation itself.")
     ap.add_argument("--val-months", type=int, default=6)
     ap.add_argument("--out", default="ml/model/nowcast.pt")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue from <out>.last if it exists, restoring the "
+                         "optimizer and EMA as well as the weights")
     args = ap.parse_args()
 
     paths = sorted(Path(args.tiles).glob("*.npz"))
@@ -185,7 +201,19 @@ def main() -> int:
     print("(model == hrrr at init by construction; training must improve on it)\n")
 
     best = -1.0
-    for ep in range(1, args.epochs + 1):
+    start_ep = 1
+    last_path = Path(str(args.out) + ".last")
+    if args.resume and last_path.exists():
+        ck = torch.load(last_path, map_location=dev, weights_only=False)
+        model.load_state_dict(ck["state_dict"])
+        opt.load_state_dict(ck["optimizer"])
+        if ema is not None and ck.get("ema") is not None:
+            ema.load_state_dict(ck["ema"])
+        best = ck.get("best", -1.0)
+        start_ep = ck["epoch"] + 1
+        print(f"resumed from epoch {ck['epoch']} (best CSI {best:.4f})\n")
+
+    for ep in range(start_ep, args.epochs + 1):
         run = n = 0.0
         for x, h, y in tl:
             x, h, y = x.to(dev), h.to(dev), y.to(dev)
@@ -204,14 +232,21 @@ def main() -> int:
         # Score whichever set of weights would actually be shipped.
         scored = ema if ema is not None else model
         vloss, csi = evaluate(scored, vl, dev)
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         flag = ""
         if csi[0] > best:
             best = csi[0]
-            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-            torch.save({"state_dict": scored.state_dict(), "base": args.base,
-                        "gated": args.gated,
-                        "val_csi": csi[0]}, args.out)
+            _save({"state_dict": scored.state_dict(), "base": args.base,
+                   "gated": args.gated, "val_csi": csi[0], "epoch": ep}, args.out)
             flag = "  *saved"
+        # Every epoch, not just the improving ones: enough to resume exactly where a
+        # crash left off, including the optimizer moments and the EMA shadow. Without
+        # these a restart loses the epochs since the last improvement and begins with
+        # a cold optimizer, which costs several epochs of progress on its own.
+        _save({"state_dict": model.state_dict(), "base": args.base,
+               "gated": args.gated, "optimizer": opt.state_dict(),
+               "ema": ema.state_dict() if ema is not None else None,
+               "epoch": ep, "best": best, "val_csi": csi[0]}, last_path)
         print(f"epoch {ep:3d}  train {run/max(n,1):.3f}  val {vloss:.3f}  "
               f"CSI {csi[0]:.4f} (hrrr {csi[1]:.4f}){flag}")
 
