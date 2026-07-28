@@ -18,6 +18,13 @@ OUT=ml/sweep_results.tsv
 mkdir -p ml/model
 [ -f "$OUT" ] || printf 'name\tbase\tgated\twet\tepochs\tbest_csi\thrrr_csi\tgain_pct\n' > "$OUT"
 
+# Is a trainer actually running? Match the interpreter, not the string
+# "train_nowcast" - an ssh command line that merely mentions the script matches a
+# plain pgrep and can make a waiter block forever on nothing.
+trainer_running () {
+  pgrep -f '^[^ ]*python[^ ]* -u ml/train_nowcast\.py' >/dev/null
+}
+
 run () {  # name base gated wet epochs
   local name=$1 base=$2 gated=$3 wet=$4 ep=$5
   local ckpt="ml/model/${name}.pt" log="/tmp/sweep_${name}.log"
@@ -42,6 +49,13 @@ run () {  # name base gated wet epochs
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$name" "$base" "$gated" "$wet" "$ep" "$best" "$hrrr" "$gain" >> "$OUT"
   echo "   best CSI ${best} vs HRRR ${hrrr} (${gain}%)"
+  # Per-lead and per-threshold breakdown, plus the probability-matched variant. The
+  # single pooled CSI above hides both the lead-time profile and the heavy-rain
+  # regression that PM exists to fix, so run them while the checkpoint is fresh.
+  $PY ml/eval_nowcast.py --ckpt "$ckpt" --tiles "$TILES" --val-months 10 \
+      > "/tmp/eval_${name}.log" 2>&1
+  $PY ml/eval_pm.py --ckpt "$ckpt" --tiles "$TILES" --val-months 10 \
+      > "/tmp/evalpm_${name}.log" 2>&1
 }
 
 # name              base gated wet epochs
