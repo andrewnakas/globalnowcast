@@ -26,6 +26,24 @@ smaller dataset; base=32 on the full set reaches 0.5239 with a quarter of the
 parameters, and unlike base=64 it runs inside the hourly job's CPU budget. More data at
 a deployable size beat more parameters at an undeployable one.
 
+## How much headroom is actually left
+
+Consecutive *truth* frames agree with each other at CSI 0.39-0.42 at 1 mm/h - that is
+how much the rain field genuinely changes in one hour. A forecast that simply carried
+the observations forward perfectly would score about 0.40.
+
+The model scores 0.51, so it is already above that line: it is not merely tracking, it
+is predicting some of the change. Which also means the remaining headroom is not the
+distance to 1.0. Chasing a leaderboard-style number past this point runs into the
+atmosphere being genuinely stochastic at these scales, not into a model limitation.
+
+Two consequences worth being concrete about. Gains from here will be small and hard to
+measure - the run-to-run spread on this dataset is 0.003, so a real improvement now
+looks like +0.01, not +0.05. And a claim of "beating the benchmarks" needs to say which
+benchmark, on whose data, at what resolution: see
+[../verify/BENCHMARKS.md](../verify/BENCHMARKS.md), where the honest answer is that
+nobody's leaderboard scores this task on this grid against this truth.
+
 ## Read this before quoting a number
 
 **Every figure carries about ±0.016.** Two runs of an identical configuration - same
