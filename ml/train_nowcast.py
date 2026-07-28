@@ -112,6 +112,9 @@ def main() -> int:
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--base", type=int, default=32)
+    ap.add_argument("--gated", action="store_true",
+                    help="gated skip fusion; lets the net weight radar against HRRR "
+                         "per cell instead of a fixed concatenate")
     ap.add_argument("--wet-weight", type=float, default=8.0)
     ap.add_argument("--val-months", type=int, default=6)
     ap.add_argument("--out", default="ml/model/nowcast.pt")
@@ -140,7 +143,7 @@ def main() -> int:
         pass
     print(f"device: {dev}")
 
-    model = NowcastUNet(base=args.base).to(dev)
+    model = NowcastUNet(base=args.base, gated=args.gated).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     tl = DataLoader(train, batch_size=args.batch, shuffle=True, drop_last=True)
@@ -168,6 +171,7 @@ def main() -> int:
             best = csi[0]
             Path(args.out).parent.mkdir(parents=True, exist_ok=True)
             torch.save({"state_dict": model.state_dict(), "base": args.base,
+                        "gated": args.gated,
                         "val_csi": csi[0]}, args.out)
             flag = "  *saved"
         print(f"epoch {ep:3d}  train {run/max(n,1):.3f}  val {vloss:.3f}  "

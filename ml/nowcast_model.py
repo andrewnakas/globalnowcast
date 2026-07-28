@@ -39,6 +39,34 @@ def _block(cin, cout):
     )
 
 
+class GatedFusion(nn.Module):
+    """Learned gate on a skip connection, instead of a plain concatenate.
+
+    The model is fed two very different things - observed radar history and an HRRR
+    forecast - and how much to trust each varies with lead time and with the weather.
+    Persistence wins at +1 h and HRRR wins from +2 h out, so a fixed combination is
+    wrong at one end or the other. A gate lets the network learn that weighting per
+    cell rather than having it baked in.
+
+    Ablations in the nowcasting literature (e.g. SwinNowcast's GAFFU) find gated
+    attention fusion to be the component that matters most, and it is far cheaper than
+    the transformer blocks that usually accompany it.
+    """
+
+    def __init__(self, channels):
+        super().__init__()
+        self.gate = nn.Sequential(
+            nn.Conv2d(channels * 2, channels, 1),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(channels, channels, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, up, skip):
+        g = self.gate(torch.cat([up, skip], 1))
+        return torch.cat([up, g * skip], 1)
+
+
 class NowcastUNet(nn.Module):
     """3-level UNet over stacked frames. Input H, W must be multiples of 8.
 
@@ -47,10 +75,11 @@ class NowcastUNet(nn.Module):
     """
 
     def __init__(self, base=32, in_frames=IN_FRAMES, out_frames=OUT_FRAMES,
-                 use_hrrr=True):
+                 use_hrrr=True, gated=False):
         super().__init__()
         self.out_frames = out_frames
         self.use_hrrr = use_hrrr
+        self.gated = gated
         cin = in_frames + (out_frames if use_hrrr else 0)
 
         self.enc1 = _block(cin, base)
@@ -64,6 +93,10 @@ class NowcastUNet(nn.Module):
         self.dec2 = _block(base * 4, base)
         self.up1 = nn.ConvTranspose2d(base, base, 2, stride=2)
         self.dec1 = _block(base * 2, base)
+        if gated:
+            self.g3 = GatedFusion(base * 4)
+            self.g2 = GatedFusion(base * 2)
+            self.g1 = GatedFusion(base)
         self.head = nn.Conv2d(base, out_frames, 1)
         # Start as a pass-through of HRRR: an untrained model then scores whatever
         # HRRR scores, and training strictly adds.
@@ -89,9 +122,14 @@ class NowcastUNet(nn.Module):
         e2 = self.enc2(self.pool(e1))
         e3 = self.enc3(self.pool(e2))
         b = self.bott(self.pool(e3))
-        d3 = self.dec3(torch.cat([self.up3(b), e3], 1))
-        d2 = self.dec2(torch.cat([self.up2(d3), e2], 1))
-        d1 = self.dec1(torch.cat([self.up1(d2), e1], 1))
+        if self.gated:
+            d3 = self.dec3(self.g3(self.up3(b), e3))
+            d2 = self.dec2(self.g2(self.up2(d3), e2))
+            d1 = self.dec1(self.g1(self.up1(d2), e1))
+        else:
+            d3 = self.dec3(torch.cat([self.up3(b), e3], 1))
+            d2 = self.dec2(torch.cat([self.up2(d3), e2], 1))
+            d1 = self.dec1(torch.cat([self.up1(d2), e1], 1))
         residual = self.head(d1)
         if hrrr is not None and self.use_hrrr:
             out = hrrr + residual

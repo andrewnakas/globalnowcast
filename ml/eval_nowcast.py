@@ -41,7 +41,7 @@ def main() -> int:
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     ck = torch.load(args.ckpt, map_location=dev, weights_only=False)
-    model = NowcastUNet(base=ck.get("base", 32)).to(dev)
+    model = NowcastUNet(base=ck.get("base", 32), gated=ck.get("gated", False)).to(dev)
     model.load_state_dict(ck["state_dict"])
     model.eval()
 
