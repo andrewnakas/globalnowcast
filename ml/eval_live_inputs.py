@@ -52,7 +52,24 @@ def from_u8(u8):
     return u8.astype(np.float32) * ((U8_HI - U8_LO) / 255.0) + U8_LO
 
 
-def build_case(anchor: datetime, cache: Path):
+def run_banded(sess, x, h, band=1000, overlap=100):
+    """Run the model in horizontal bands and stitch, for frames too large to fit
+    one forward pass in memory (a 0.01-degree CONUS frame OOMs a full pass). The
+    overlap exceeds the 3-level UNet's receptive field, and each band's interior
+    is kept, so the stitch is seamless up to floating point."""
+    H = x.shape[-2]
+    if H <= band + 2 * overlap:
+        return sess.run(["forecast"], {"radar": x[None], "hrrr": h[None]})[0][0]
+    out = np.empty((h.shape[0],) + x.shape[-2:], np.float32)
+    for y0 in range(0, H, band):
+        lo, hi = max(0, y0 - overlap), min(H, y0 + band + overlap)
+        got = sess.run(["forecast"], {"radar": x[None, :, lo:hi],
+                                      "hrrr": h[None, :, lo:hi]})[0][0]
+        out[:, y0:min(H, y0 + band)] = got[:, y0 - lo:y0 - lo + band]
+    return out
+
+
+def build_case(anchor: datetime, cache: Path, grid=None):
     """Fetch (or reload) one case: inputs as the live job sees them, plus truth."""
     path = cache / f"{anchor:%Y%m%d%H}.npz"
     if path.exists():
@@ -60,18 +77,18 @@ def build_case(anchor: datetime, cache: Path):
         return {k: d[k] for k in d.files}
 
     s = requests.Session()
-    hist = mrms.fetch_history(s, anchor)
+    hist = mrms.fetch_history(s, anchor, grid)
     if hist is None:
         return None
     x, x_mask, _ = hist
-    fc = hrrr.fetch_forecast(s, anchor,
+    fc = hrrr.fetch_forecast(s, anchor, grid,
                              avail=anchor + timedelta(minutes=JOB_DELAY_MIN))
     if fc is None:
         return None
     h, h_mask, cycle = fc
     truth, t_masks = [], []
     for k in LEADS:
-        got = mrms.fetch_rate(s, anchor + timedelta(hours=k))
+        got = mrms.fetch_rate(s, anchor + timedelta(hours=k), grid)
         if got is None:
             return None
         truth.append(got[0])
@@ -95,6 +112,9 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--from-cache", action="store_true",
                     help="re-score the anchors already fetched into --cache")
+    ap.add_argument("--res", type=float, default=0.02,
+                    help="serving grid resolution in degrees; 0.01 tests the "
+                         "model at its native training scale (use its own cache)")
     ap.add_argument("--half", choices=["even", "odd", "all"], default="all",
                     help="subset by date order; 'odd' is the half fit_pm_full "
                          "did not fit its tables on")
@@ -104,6 +124,10 @@ def main() -> int:
 
     sess = ort.InferenceSession(args.onnx, providers=["CPUExecutionProvider"])
     tables = np.load(args.pm)["ref_q"]
+    grid = None
+    if abs(args.res - 0.02) > 1e-9:
+        grid = obs.Grid.window(50.0, 24.0, -125.0, -66.0, args.res,
+                               f"conus{args.res:g}")
     cache = Path(args.cache)
     cache.mkdir(parents=True, exist_ok=True)
 
@@ -127,7 +151,7 @@ def main() -> int:
     used = 0
 
     with ThreadPoolExecutor(args.workers) as pool:
-        futs = {pool.submit(build_case, a, cache): a for a in anchors}
+        futs = {pool.submit(build_case, a, cache, grid): a for a in anchors}
         for fut in as_completed(futs):
             anchor = futs[fut]
             try:
@@ -141,7 +165,7 @@ def main() -> int:
 
             x, h = from_u8(case["x"]), from_u8(case["h"])
             truth = from_u8(case["y"])
-            pred = sess.run(["forecast"], {"radar": x[None], "hrrr": h[None]})[0][0]
+            pred = run_banded(sess, x, h)
             in_mask = case["x_mask"] & case["h_mask"]
             pm = np.full_like(pred, U8_LO)
             for i in range(pred.shape[0]):
