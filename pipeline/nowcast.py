@@ -155,18 +155,21 @@ def advect(field: np.ndarray, flow: np.ndarray, steps: float) -> np.ndarray:
     return warped[:, pad:pad + w] if pad else warped
 
 
-def blend_weight(lead_min: float) -> float:
-    """Weight on the observation-based field; GFS takes the remainder.
+def blend_weight(lead_min: float, crossover: float = BLEND_CROSSOVER_MIN,
+                 tau: float = BLEND_TAU_MIN, hold: float = OBS_ONLY_MIN) -> float:
+    """Weight on the observation-based field; the model takes the remainder.
 
     Held at exactly 1 for the first stretch, then rescaled so it leaves 1 smoothly
     rather than stepping - a discontinuity here would be visible as a jump in the
-    animation.
+    animation. The defaults are the satellite/GFS fit; the CONUS radar/HRRR layer
+    passes its own much earlier crossover (radar loses to HRRR around +2 h, the
+    satellite only loses to GFS around +4.5 h).
     """
-    if lead_min <= OBS_ONLY_MIN:
+    if lead_min <= hold:
         return 1.0
-    logistic = lambda t: 1.0 / (1.0 + np.exp((t - BLEND_CROSSOVER_MIN) / BLEND_TAU_MIN))
+    logistic = lambda t: 1.0 / (1.0 + np.exp((t - crossover) / tau))
     # Divide through by the value at the hold point so the curve starts at 1 there.
-    return float(min(1.0, logistic(lead_min) / logistic(OBS_ONLY_MIN)))
+    return float(min(1.0, logistic(lead_min) / logistic(hold)))
 
 
 def blend(adv_dbz: np.ndarray, gfs_dbz: np.ndarray, mask: np.ndarray,

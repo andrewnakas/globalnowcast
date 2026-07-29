@@ -18,6 +18,7 @@ REGION = "us-west-2"
 STORES = {
     "mrms": ("dynamical-noaa-mrms", "noaa-mrms-conus-analysis-hourly/v0.3.0.icechunk"),
     "hrrr": ("dynamical-noaa-hrrr", "noaa-hrrr-analysis/v0.2.0.icechunk"),
+    "hrrr_fc": ("dynamical-noaa-hrrr", "noaa-hrrr-forecast-48-hour/v0.1.0.icechunk"),
 }
 MRMS_RATE = "precipitation_surface"       # kg m-2 s-1, x3600 for mm/h
 HRRR_REFL = "composite_reflectivity"      # dBZ
@@ -126,6 +127,55 @@ def hrrr_on(lat: np.ndarray, lon: np.ndarray, times, var: str = HRRR_REFL):
     for k, p in enumerate(pos):
         out[k] = span[p - lo].ravel()[idx].reshape(lat.size, lon.size)
     return np.maximum(np.nan_to_num(out, nan=FILL), FILL)
+
+
+def hrrr_fc_box(anchor, lat, lon, max_lead_h: int = 12):
+    """HRRR *forecast* composite reflectivity over a lat/lon box, one init.
+
+    The init is the newest one at least an hour old at `anchor` - the same
+    walk-back the live job does, except the archive only has 00/06/12/18Z inits,
+    so the training channel is on average *older* than the served one (up to
+    fh12 vs fh2-7 live). Harder, not easier: a model robust to this is robust to
+    serving.
+
+    Returns (refc (leads, ny, nx) on the box's KD-tree mapping, init, lead_hours)
+    or None. Reads leads 1..max_lead_h in one go - they live in a single chunk -
+    so callers slice locally instead of re-reading per sequence.
+    """
+    from scipy.spatial import cKDTree
+
+    ds = open_store("hrrr_fc")
+    inits = ds.init_time.values
+    cutoff = np.datetime64(anchor, "ns") - np.timedelta64(1, "h")
+    ok = inits[inits <= cutoff]
+    if not len(ok):
+        return None
+    init = ok[-1]
+
+    hla, hlo = ds["latitude"].values, ds["longitude"].values
+    pad = 0.5
+    sel = ((hla >= lat.min() - pad) & (hla <= lat.max() + pad) &
+           (hlo >= lon.min() - pad) & (hlo <= lon.max() + pad))
+    if not sel.any():
+        return None
+    ys, xs = np.where(sel)
+    y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max()
+    tree = cKDTree(np.c_[hla[y0:y1 + 1, x0:x1 + 1].ravel(),
+                         hlo[y0:y1 + 1, x0:x1 + 1].ravel()])
+    gy, gx = np.meshgrid(lat, lon, indexing="ij")
+    _, idx = tree.query(np.c_[gy.ravel(), gx.ravel()])
+
+    leads = np.arange(1, max_lead_h + 1)
+    try:
+        span = ds["composite_reflectivity"].sel(init_time=init).isel(
+            lead_time=leads, y=slice(y0, y1 + 1), x=slice(x0, x1 + 1)).values
+    except Exception as e:  # noqa: BLE001
+        print(f"  hrrr_fc {init}: {e}", file=sys.stderr)
+        return None
+    out = np.empty((len(leads), lat.size, lon.size), np.float32)
+    for k in range(len(leads)):
+        out[k] = span[k].ravel()[idx].reshape(lat.size, lon.size)
+    return np.maximum(np.nan_to_num(out, nan=FILL), FILL), init, leads
 
 
 def grid_size():

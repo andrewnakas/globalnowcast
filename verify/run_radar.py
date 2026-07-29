@@ -15,6 +15,7 @@ are trained on radar and predict radar. Being behind at high thresholds is expec
 not a bug.
 """
 import argparse
+import json
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -69,6 +70,49 @@ def one_case(session, t0, leads_min, gap_min, grid):
     return out
 
 
+def model_case(session, t0, leads_min, gap_min, grid):
+    """Four-way comparison at hourly leads, anchored at a top-of-hour: the radar
+    model + PM, the HRRR forecast it corrects, and the satellite advection that
+    covers CONUS when the model layer is down. All on the same truth and mask, with
+    the HRRR cycle chosen as the live job at t0+10min would have chosen it."""
+    import radar_model
+
+    out = radar_model.predict_anchor(session, t0, grid,
+                                     avail=t0 + timedelta(minutes=10),
+                                     keep_hrrr=True)
+    if out is None:
+        print(f"  {t0:%H:%MZ}: radar model unavailable")
+        return []
+    anchor = obs.fetch_frame(session, t0, levels=(5,), latency_min=0, grid=grid)
+    prior = obs.fetch_frame(session, t0 - timedelta(minutes=gap_min),
+                            levels=(5,), latency_min=0, grid=grid)
+    if anchor is None or prior is None:
+        print(f"  {t0:%H:%MZ}: no satellite pair")
+        return []
+    sat, sat_mask = anchor[0], anchor[1]
+    flow = nowcast.estimate_flow(prior[0], sat, gap_min, km_per_px=KM_PER_PX)
+
+    rows = []
+    for lead in leads_min:
+        valid = t0 + timedelta(minutes=lead)
+        if valid not in out["by_valid"]:
+            continue
+        truth = radar.fetch(session, valid, grid)
+        if truth is None:
+            continue
+        rad, rad_mask, _ = truth
+        mask = sat_mask & rad_mask & out["mask"]
+        fields = {
+            "persistence": sat,
+            "advection": nowcast.advect(sat, flow, lead / 30.0),
+            "hrrr": out["hrrr_by_valid"][valid],
+            "radar_model": out["by_valid"][valid],
+        }
+        rows.append((lead, fields, rad, mask))
+    print(f"  {t0:%H:%MZ}: HRRR cycle {out['cycle']:%HZ}, {len(rows)} lead(s) scored")
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=6, help="how far back to start")
@@ -76,26 +120,51 @@ def main() -> int:
     ap.add_argument("--leads", default="30,60,90,120")
     ap.add_argument("--gap", type=int, default=30, help="flow pair separation, min")
     ap.add_argument("--fss-window", type=int, default=25)
+    ap.add_argument("--with-model", action="store_true",
+                    help="hourly anchors, adding the radar model + HRRR rows")
+    ap.add_argument("--archive", default=None,
+                    help="append per-case contingency counts to this jsonl "
+                         "(cases already present are skipped)")
     args = ap.parse_args()
 
-    leads = [int(x) for x in args.leads.split(",")]
+    if args.with_model:
+        leads = [60 * k for k in range(1, 7)]
+    else:
+        leads = [int(x) for x in args.leads.split(",")]
     grid = obs.CONUS_2KM
     print(f"{grid}, truth = MRMS radar, flow pair {args.gap} min\n")
 
     session = requests.Session()
     # Radar and satellite both need to exist, so stay well behind real time.
     end = datetime.now(timezone.utc) - timedelta(minutes=max(leads) + 40)
+    if args.with_model:  # the model layer anchors on whole hours
+        end = end.replace(minute=0, second=0, microsecond=0)
     pooled = defaultdict(lambda: [0, 0, 0, 0])
     fss_acc = defaultdict(list)
     sat_bias = []
     n = 0
 
-    for k in range(args.hours * 60 // args.every):
-        t0 = end - timedelta(minutes=k * args.every)
-        case = one_case(session, t0, leads, args.gap, grid)
+    archive = Path(args.archive) if args.archive else None
+    done = set()
+    if archive and archive.exists():
+        done = {json.loads(line)["t0"] for line in archive.read_text().splitlines()
+                if line.strip()}
+
+    every = 60 if args.with_model else args.every
+    for k in range(args.hours * 60 // every):
+        t0 = end - timedelta(minutes=k * every)
+        stamp = t0.strftime("%Y-%m-%dT%H:%MZ")
+        if stamp in done:
+            print(f"  {t0:%H:%MZ}: already archived")
+            continue
+        if args.with_model:
+            case = model_case(session, t0, leads, args.gap, grid)
+        else:
+            case = one_case(session, t0, leads, args.gap, grid)
         if not case:
             continue
         n += 1
+        records = []
         for lead, fields, rad, mask in case:
             for model, field in fields.items():
                 for mmhr, dbz in THRESHOLDS.items():
@@ -103,6 +172,12 @@ def main() -> int:
                     key = (model, lead, mmhr)
                     pooled[key] = [a + b for a, b in zip(pooled[key], c)]
                     fss_acc[key].append(fss(field, rad, dbz, args.fss_window, mask))
+                    records.append({"lead_min": lead, "model": model,
+                                    "mm_hr": mmhr, "counts": list(c)})
+        if archive and records:
+            with archive.open("a") as f:
+                f.write(json.dumps({"t0": stamp, "grid": grid.name,
+                                    "records": records}) + "\n")
             # How much wetter/drier is the satellite than the radar it is scored on?
             sat_bias.append((float((fields["persistence"] >= 23.0)[mask].mean()),
                              float((rad >= 23.0)[mask].mean())))
@@ -111,21 +186,23 @@ def main() -> int:
         print("no cases scored")
         return 1
 
+    models = (("persistence", "advection", "hrrr", "radar_model")
+              if args.with_model else ("persistence", "advection"))
     print(f"\n{n} case(s), CONUS, ~2.2 km grid, verified against MRMS radar")
     for mmhr in THRESHOLDS:
         print(f"\n=== CSI at {mmhr:g} mm/h ===")
-        print(f"{'lead':>7}{'persistence':>14}{'advection':>12}")
+        print(f"{'lead':>7}" + "".join(f"{m:>13}" for m in models))
         for lead in leads:
-            row = "".join(f"{csi(*pooled[(m, lead, mmhr)][:3]):>{14 if m=='persistence' else 12}.4f}"
-                          for m in ("persistence", "advection"))
+            row = "".join(f"{csi(*pooled[(m, lead, mmhr)][:3]):>13.4f}"
+                          for m in models)
             print(f"{'+' + str(lead) + 'm':>7}{row}")
 
     print(f"\n=== FSS (window {args.fss_window} px ~ {args.fss_window*2.2:.0f} km), "
           "1 mm/h ===")
-    print(f"{'lead':>7}{'persistence':>14}{'advection':>12}")
+    print(f"{'lead':>7}" + "".join(f"{m:>13}" for m in models))
     for lead in leads:
-        row = "".join(f"{np.nanmean(fss_acc[(m, lead, 1.0)]):>{14 if m=='persistence' else 12}.4f}"
-                      for m in ("persistence", "advection"))
+        row = "".join(f"{np.nanmean(fss_acc[(m, lead, 1.0)]):>13.4f}"
+                      for m in models)
         print(f"{'+' + str(lead) + 'm':>7}{row}")
 
     if sat_bias:

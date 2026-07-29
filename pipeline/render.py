@@ -43,6 +43,11 @@ def decode_refc(grib_bytes: bytes) -> np.ndarray:
     return np.roll(data, data.shape[1] // 2, axis=1)
 
 
-def render_png(data: np.ndarray, path: str) -> None:
+def render_png(data: np.ndarray, path: str, alpha: np.ndarray | None = None) -> None:
+    """Colormap `data` to a transparent PNG. `alpha` (0..1, same shape) scales the
+    palette's own alpha - regional overlays use it to feather their edges so the
+    boundary between data sources never shows as a hard seam."""
     rgba = LUT[np.digitize(data, BINS)]
+    if alpha is not None:
+        rgba[..., 3] = (rgba[..., 3] * np.clip(alpha, 0.0, 1.0)).astype(np.uint8)
     Image.fromarray(rgba, "RGBA").save(path, optimize=True)

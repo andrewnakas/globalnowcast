@@ -40,6 +40,9 @@ const state = {
 };
 
 const overlay = L.imageOverlay("", BOUNDS, { opacity: state.opacity, interactive: false }).addTo(map);
+// CONUS radar-model layer, drawn above the global field where radar exists. Its
+// PNGs carry their own feathered alpha, so it just stacks: no client-side blending.
+const conusOverlay = L.imageOverlay("", BOUNDS, { opacity: state.opacity, interactive: false });
 
 const el = (id) => document.getElementById(id);
 // Manifest uses "YYYY-MM-DDTHH:00Z"; normalize to a form every browser parses.
@@ -76,36 +79,82 @@ function loadProduct(product) {
   show(0);
 }
 
+function loadTimeline() {
+  // One seamless 0-48h sequence: 15-minute satellite nowcast, then hourly GFS,
+  // with the CONUS radar-model layer stacked wherever the manifest carries it.
+  state.product = "timeline";
+  state.frames = state.manifest.timeline;
+  state.images = preload(state.frames);
+  state.frames.forEach((f) => {
+    if (f.conus) {
+      const img = new Image();
+      img.src = `data/frames/${f.conus}`;
+    }
+  });
+  if (state.manifest.conus) {
+    conusOverlay.setBounds(L.latLngBounds(state.manifest.conus.bounds));
+    conusOverlay.addTo(map);
+  }
+  state.index = 0;
+  el("scrub").max = String(Math.max(0, state.frames.length - 1));
+  document.querySelector(".products").hidden = true;
+  show(0);
+}
+
 function show(i) {
   if (!state.frames.length) return;
   state.index = (i + state.frames.length) % state.frames.length;
   const frame = state.frames[state.index];
   overlay.setUrl(`data/frames/${frame.file}`);
+  if (state.product === "timeline" && state.manifest.conus) {
+    if (frame.conus) {
+      conusOverlay.setUrl(`data/frames/${frame.conus}`);
+      conusOverlay.setOpacity(state.opacity);
+    } else {
+      conusOverlay.setOpacity(0);
+    }
+  }
   el("scrub").value = String(state.index);
 
-  // Nowcast frames are anchored to the observation time, not the model cycle —
-  // measuring their lead against the cycle would overstate it by hours.
+  // Nowcast-anchored frames measure lead from the observation time, not the model
+  // cycle — measuring against the cycle would overstate it by hours.
   const d = parseUTC(frame.valid);
-  const nowcasting = state.product === "nowcast" && state.manifest.obs_time;
+  const timeline = state.product === "timeline";
+  const nowcasting = (timeline || state.product === "nowcast") && state.manifest.obs_time;
   const ref = parseUTC(nowcasting ? state.manifest.obs_time : state.manifest.cycle);
   const mins = Math.round((d - ref) / 6e4);
-  const lead = nowcasting
-    ? (mins === 0 ? "now" : `+${mins}m`)
+  const lead = mins <= 0 ? "now"
+    : mins < 120 ? `+${mins}m`
     : `+${Math.round(mins / 60)}h`;
   el("valid-time").textContent = `${fmt.format(d)}  ·  ${lead}`;
 
   const ml = state.manifest.corrected ? " · ML-corrected" : "";
   const label = { obs: "satellite obs", blend: "obs + GFS blend", gfs: "GFS" };
+  const conus = timeline && frame.conus ? " · CONUS: radar+HRRR" : "";
   el("cycle-info").textContent = nowcasting
-    ? `${label[frame.source] || "obs"} from ${state.manifest.obs_time}${ml}`
-    : `GFS ${state.manifest.cycle} · built ${state.manifest.generated_at.slice(11, 16)}Z${ml}`;
+    ? `${label[frame.source] || "GFS"}${conus} · obs ${state.manifest.obs_time}${ml}`
+    : `GFS ${state.manifest.cycle}${conus} · built ${state.manifest.generated_at.slice(11, 16)}Z${ml}`;
+}
+
+function frameDelay() {
+  // 15-minute steps need a quicker cadence than hourly ones to read as motion;
+  // on the unified timeline the spacing changes mid-sequence, so it is computed
+  // from the actual gap to the next frame rather than fixed per product.
+  if (state.product === "nowcast") return 280;
+  if (state.product !== "timeline") return 450;
+  const next = state.frames[(state.index + 1) % state.frames.length];
+  const gap = parseUTC(next.valid) - parseUTC(state.frames[state.index].valid);
+  return gap > 0 && gap <= 20 * 6e4 ? 280 : 450;
 }
 
 function startTimer() {
   clearInterval(state.timer);
-  // 15-minute steps need a quicker cadence than hourly ones to read as motion.
-  const ms = state.product === "nowcast" ? 280 : 450;
-  state.timer = setInterval(() => show(state.index + 1), ms);
+  clearTimeout(state.timer);
+  const tick = () => {
+    show(state.index + 1);
+    state.timer = setTimeout(tick, frameDelay());
+  };
+  state.timer = setTimeout(tick, frameDelay());
 }
 
 function play() {
@@ -123,6 +172,7 @@ function wire() {
   el("opacity").oninput = (e) => {
     state.opacity = Number(e.target.value) / 100;
     overlay.setOpacity(state.opacity);
+    if (state.frames[state.index]?.conus) conusOverlay.setOpacity(state.opacity);
   };
   document.querySelectorAll(".products button").forEach((b) => {
     b.onclick = () => loadProduct(b.dataset.product);
@@ -136,14 +186,19 @@ async function init() {
     const res = await fetch(`data/manifest.json?t=${Date.now()}`);
     if (!res.ok) throw new Error(res.status);
     state.manifest = await res.json();
-    // Hide products this run didn't produce, then open the most skilful one there is.
-    let first = null;
-    document.querySelectorAll(".products button").forEach((b) => {
-      const has = Boolean(state.manifest.products[b.dataset.product]?.length);
-      b.hidden = !has;
-      if (has && !first) first = b.dataset.product;
-    });
-    loadProduct(first || "rapid");
+    if (state.manifest.timeline?.length) {
+      loadTimeline();
+    } else {
+      // Older manifest: hide products this run didn't produce, then open the most
+      // skilful one there is.
+      let first = null;
+      document.querySelectorAll(".products button").forEach((b) => {
+        const has = Boolean(state.manifest.products[b.dataset.product]?.length);
+        b.hidden = !has;
+        if (has && !first) first = b.dataset.product;
+      });
+      loadProduct(first || "rapid");
+    }
     el("status").classList.add("hidden");
   } catch (e) {
     el("status").textContent =

@@ -26,6 +26,14 @@ NOWCAST_STEP_MIN = 15
 # lead would cost ~200 MB for no benefit.
 NOWCAST_GFS_HOURS = 6
 
+# CONUS radar-model overlay: rendered on the 2 km window, drawn above the global
+# field. Feather the edge over ~0.75 degrees and fade the layer out over its final
+# hour so both its spatial boundary and its exit from the animation are soft.
+CONUS_BOUNDS = [[24.0, -125.0], [50.0, -66.0]]
+CONUS_FEATHER_PX = 37
+CONUS_FADE_FROM_MIN = 300.0
+CONUS_HORIZON_MIN = 360.0
+
 
 def build_frame(session: requests.Session, cycle: datetime, lead: int,
                 keep: dict | None = None):
@@ -103,6 +111,52 @@ def build_nowcast(session: requests.Session, now: datetime, gfs_by_valid: dict):
         return None, None
 
 
+def build_conus_layer(session: requests.Session, now: datetime, valids: list):
+    """CONUS radar+HRRR overlay frames for timeline entries inside its horizon.
+
+    Returns ({valid: png name}, info dict) or ({}, None). Same contract as
+    build_nowcast: the layer is a bonus, and no failure here may touch the GFS or
+    satellite products.
+    """
+    try:
+        import cv2
+
+        import conus
+
+        got = conus.predict(session, now, valids)
+        if got is None:
+            return {}, None
+        fields, mask, info = got
+        anchor = info["anchor"]
+
+        # Spatial feather: distance into the radar-covered area, ramped over
+        # ~0.75 degrees, so the layer dissolves into the global field instead of
+        # ending in a hard line at the coverage boundary.
+        dist = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 3)
+        feather = np.clip(dist / CONUS_FEATHER_PX, 0.0, 1.0).astype(np.float32)
+
+        layers = {}
+        for valid, field in sorted(fields.items()):
+            minutes = (valid - anchor).total_seconds() / 60.0
+            fade = 1.0
+            if minutes > CONUS_FADE_FROM_MIN:
+                fade = (CONUS_HORIZON_MIN - minutes) / \
+                       (CONUS_HORIZON_MIN - CONUS_FADE_FROM_MIN)
+            name = f"conus_{valid:%Y%m%d%H%M}.png"
+            render_png(field, FRAMES_DIR / name, alpha=feather * fade)
+            layers[valid] = name
+        if layers:
+            print(f"conus layer: {len(layers)} frames from {anchor:%Y-%m-%d %H:%MZ} "
+                  f"(HRRR {info['cycle']:%HZ})")
+        manifest_info = {"anchor": anchor.strftime("%Y-%m-%dT%H:%MZ"),
+                         "hrrr_cycle": info["cycle"].strftime("%Y-%m-%dT%H:00Z"),
+                         "bounds": CONUS_BOUNDS, "source": info["source"]}
+        return layers, (manifest_info if layers else None)
+    except Exception as e:  # noqa: BLE001 - never break the build
+        print(f"conus layer: skipped ({e})", file=sys.stderr)
+        return {}, None
+
+
 def main() -> None:
     now = datetime.now(timezone.utc)
     session = requests.Session()
@@ -123,8 +177,10 @@ def main() -> None:
         return build_frame(session, cycle, lead,
                            keep=gfs_by_valid if valid <= keep_before else None)
 
+    t_gfs = time.time()
     with ThreadPoolExecutor(max_workers=8) as pool:
         frames = list(pool.map(one, leads))
+    t_gfs = time.time() - t_gfs
 
     good = [f for f in frames if f]
     # Gate on the GFS frames only; the nowcast is additive and must not be able to
@@ -132,7 +188,27 @@ def main() -> None:
     if len(good) < 0.8 * len(leads):
         sys.exit(f"only {len(good)}/{len(leads)} frames built - aborting")
 
+    t_now = time.time()
     nowcast_frames, obs_time = build_nowcast(session, now, gfs_by_valid)
+    t_now = time.time() - t_now
+
+    # One seamless 0-48h sequence: the 15-minute satellite nowcast while it lasts,
+    # then the hourly GFS frames. The products block stays as-is so an older viewer
+    # (or a rollback) keeps working from the same manifest.
+    def _parse(s):
+        return datetime.strptime(s, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
+
+    timeline = list(nowcast_frames or [])
+    cutoff = _parse(timeline[-1]["valid"]) if timeline else None
+    timeline += [f for f in good if cutoff is None or _parse(f["valid"]) > cutoff]
+
+    t_conus = time.time()
+    valids = [_parse(e["valid"]) for e in timeline]
+    layers, conus_info = build_conus_layer(session, now, valids)
+    for entry, valid in zip(timeline, valids):
+        if valid in layers:
+            entry["conus"] = layers[valid]
+    t_conus = time.time() - t_conus
 
     manifest = {
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -142,13 +218,19 @@ def main() -> None:
             "rapid": good[: RAPID_HOURS + 1],
             "extended": good,
         },
+        "timeline": timeline,
     }
+    if conus_info:
+        manifest["conus"] = conus_info
     if nowcast_frames:
         manifest["obs_time"] = obs_time.strftime("%Y-%m-%dT%H:%MZ")
         manifest["products"]["nowcast"] = nowcast_frames
     (SITE_DATA / "manifest.json").write_text(json.dumps(manifest, indent=1))
     print(f"built {len(good)}/{len(leads)} frames"
-          + (f" + {len(nowcast_frames)} nowcast" if nowcast_frames else ""))
+          + (f" + {len(nowcast_frames)} nowcast" if nowcast_frames else "")
+          + (f" + {len(layers)} conus" if layers else ""))
+    print(f"stage times: gfs {t_gfs:.0f}s, nowcast {t_now:.0f}s, "
+          f"conus {t_conus:.0f}s")
 
 
 if __name__ == "__main__":

@@ -60,6 +60,17 @@ jobs:
             --sweep-crossover 300,330,360,420 \
             --archive verify/archive.jsonl
 
+      - name: Score CONUS radar-model cases
+        # Separate archive file so the global schema stays stable. The radar model
+        # and HRRR rows only exist where the artifacts do; failures here must not
+        # block the global accumulation above, hence continue-on-error.
+        continue-on-error: true
+        run: |
+          # 8 hourly cases is ~20 min of fetches; the whole job must stay inside
+          # its 60-minute timeout alongside the global scoring above.
+          python verify/run_radar.py --with-model --hours 8 \
+            --archive verify/archive_conus.jsonl
+
       - name: Summarise the archive
         run: |
           python verify/archive.py
@@ -67,12 +78,13 @@ jobs:
 
       - name: Commit new cases
         run: |
-          if git diff --quiet -- verify/archive.jsonl; then
+          if git diff --quiet -- verify/archive.jsonl verify/archive_conus.jsonl \
+              && [ -z "$(git status --porcelain verify/archive_conus.jsonl)" ]; then
             echo "no new cases"; exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add verify/archive.jsonl
+          git add verify/archive.jsonl verify/archive_conus.jsonl
           git commit -m "Add verification cases through $(date -u +%Y-%m-%d)
 
           Appended by .github/workflows/verify.yml. Counts only; refit with
