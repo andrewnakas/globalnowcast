@@ -42,7 +42,8 @@ def build_frame(session: requests.Session, cycle: datetime, lead: int,
     for attempt in range(3):
         try:
             grib = fetch_refc(session, cycle, lead)
-            field = correct(decode_refc(grib))
+            field = correct(decode_refc(grib), lead_h=lead,
+                            blend_frame=keep is not None)
             render_png(field, FRAMES_DIR / name)
             if keep is not None:
                 # Stash the corrected field for the blend so the nowcast sees

@@ -28,9 +28,11 @@ def conv_block(cin, cout):
 
 
 class RefcUNet(nn.Module):
-    def __init__(self, base=16):
+    def __init__(self, base=16, cin=1):
+        """`cin` beyond 1 carries conditioning channels (lead fraction, latitude);
+        the residual is still added to the dBZ channel alone by the caller."""
         super().__init__()
-        self.enc1 = conv_block(1, base)
+        self.enc1 = conv_block(cin, base)
         self.enc2 = conv_block(base, base * 2)
         self.pool = nn.MaxPool2d(2)
         self.bott = conv_block(base * 2, base * 2)
