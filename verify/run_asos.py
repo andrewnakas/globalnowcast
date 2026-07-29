@@ -93,11 +93,33 @@ def accumulate(session, grid, end_time, steps=6):
     return np.mean(rates, axis=0), mask  # mm/h averaged over the hour == mm accumulated
 
 
+def blend_hour(session, grid, end_time, lead_h):
+    """The shipped CONUS blend's accumulation for the hour ending at `end_time`,
+    forecast from an anchor `lead_h` hours earlier, built exactly as the live job
+    would have built it at that moment."""
+    import conus
+
+    anchor_now = end_time - timedelta(hours=lead_h)
+    valids = [end_time - timedelta(minutes=10 * k) for k in range(6)]
+    got = conus.predict(session, anchor_now + timedelta(minutes=10), valids,
+                        grid=grid, avail=anchor_now + timedelta(minutes=10))
+    if got is None:
+        return None, None
+    fields, mask, _ = got
+    if not fields:
+        return None, None
+    rates = [obs.dbz_to_rain(f) for f in fields.values()]
+    return np.mean(rates, axis=0), mask
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=24, help="how many hours to score")
     ap.add_argument("--end-lag", type=int, default=6,
                     help="hours behind now, so both sources are complete")
+    ap.add_argument("--with-blend", action="store_true",
+                    help="also score the shipped CONUS blend at --lead hours")
+    ap.add_argument("--lead", type=int, default=2)
     args = ap.parse_args()
 
     import requests
@@ -120,7 +142,8 @@ def main() -> int:
     df = df.assign(_i=lat_idx, _j=lon_idx)
 
     pooled = defaultdict(lambda: [0, 0, 0])
-    n_hours = 0
+    pooled_blend = defaultdict(lambda: [0, 0, 0])
+    n_hours = n_blend = 0
     for hour, rows in df.groupby(df.valid.dt.floor("h")):
         t = hour.to_pydatetime().astimezone(timezone.utc)
         acc, mask = accumulate(session, grid, t)
@@ -138,9 +161,25 @@ def main() -> int:
             c[0] += int((p & o).sum())
             c[1] += int((~p & o).sum())
             c[2] += int((p & ~o).sum())
-        print(f"  {t:%m-%d %HZ}: {int(keep.sum())} stations, "
-              f"gauge wet {float((gauge_mm >= 0.2).mean()):.3f} "
-              f"radar wet {float((radar_mm >= 0.2).mean()):.3f}")
+        line = (f"  {t:%m-%d %HZ}: {int(keep.sum())} stations, "
+                f"gauge wet {float((gauge_mm >= 0.2).mean()):.3f} "
+                f"radar wet {float((radar_mm >= 0.2).mean()):.3f}")
+        if args.with_blend:
+            bacc, bmask = blend_hour(session, grid, t, args.lead)
+            if bacc is not None:
+                bkeep = keep & bmask[rows._i.values, rows._j.values]
+                if bkeep.any():
+                    blend_mm = bacc[rows._i.values, rows._j.values][bkeep]
+                    bg = rows.p01m.values[bkeep]
+                    n_blend += 1
+                    for thr in THRESHOLDS:
+                        p, o = blend_mm >= thr, bg >= thr
+                        c = pooled_blend[thr]
+                        c[0] += int((p & o).sum())
+                        c[1] += int((~p & o).sum())
+                        c[2] += int((p & ~o).sum())
+                    line += f" blend wet {float((blend_mm >= 0.2).mean()):.3f}"
+        print(line, flush=True)
 
     if not n_hours:
         print("nothing scored")
@@ -153,6 +192,16 @@ def main() -> int:
         print(f"{f'{thr:g} mm':>12}{csi(h, m, f):>9.4f}"
               f"{h / max(h + m, 1):>8.3f}{f / max(h + f, 1):>8.3f}"
               f"{(h + f) / max(h + m, 1):>8.2f}")
+
+    if n_blend:
+        print(f"\n=== CONUS blend (+{args.lead}h forecast) vs ASOS gauges, "
+              f"{n_blend} hour(s) ===")
+        print(f"{'threshold':>12}{'CSI':>9}{'POD':>8}{'FAR':>8}{'bias':>8}")
+        for thr in THRESHOLDS:
+            h, m, f = pooled_blend[thr]
+            print(f"{f'{thr:g} mm':>12}{csi(h, m, f):>9.4f}"
+                  f"{h / max(h + m, 1):>8.3f}{f / max(h + f, 1):>8.3f}"
+                  f"{(h + f) / max(h + m, 1):>8.2f}")
 
     print("\nThis is the truth source the model is trained against, measured against an")
     print("independent instrument. Whatever disagreement shows up here is a floor on")

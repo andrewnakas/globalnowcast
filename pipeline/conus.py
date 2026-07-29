@@ -40,11 +40,12 @@ HORIZON_MIN = 360.0
 KM_PER_PX = 0.02 * 111.0
 
 
-def predict(session, now, valids, grid=None):
+def predict(session, now, valids, grid=None, avail=None):
     """Blended radar/HRRR fields at each requested valid time.
 
     Returns ({valid: dBZ field}, mask, info) or None. `valids` outside
-    [anchor, anchor + HORIZON_MIN] are simply not produced.
+    [anchor, anchor + HORIZON_MIN] are simply not produced. `avail` simulates a
+    historical build time for the HRRR cycle walk-back (verification only).
     """
     if os.environ.get("NOWCAST_CONUS", "1") == "0":
         return None
@@ -72,7 +73,7 @@ def predict(session, now, valids, grid=None):
         if gap <= 0:
             return None
 
-        fc = hrrr.fetch_forecast(session, anchor, grid)
+        fc = hrrr.fetch_forecast(session, anchor, grid, avail=avail)
         if fc is None:
             return None
         h, h_mask, cycle = fc
