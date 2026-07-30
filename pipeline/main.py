@@ -74,14 +74,20 @@ def build_nowcast(session: requests.Session, now: datetime, gfs_by_valid: dict):
 
         cv2.setNumThreads(2)  # the runner has few cores; cv2 is already threaded
 
-        pair = obs.latest_pair(session, now)
+        # The observation product renders at 0.1 degrees - the satellite is 0.02
+        # natively, so this is real structure, not interpolation. GFS stays on its
+        # own 0.25 grid and is upsampled (in rain rate) only where the blend
+        # needs it.
+        grid = obs.GLOBAL_HI
+        km_per_px = 0.1 * 111.0
+        pair = obs.latest_pair(session, now, grid=grid)
         if pair is None:
             print("nowcast: no observations available", file=sys.stderr)
             return None, None
         prev_dbz, last_dbz, mask, obs_time, gap_min = pair
 
         flow = nowcast.estimate_flow(prev_dbz, last_dbz, gap_min,
-                                     km_per_px=0.25 * 111.0)
+                                     km_per_px=km_per_px)
         p99 = float(np.percentile(np.hypot(flow[..., 0], flow[..., 1]), 99))
         if p99 < 1.0:
             # Flow this small means the field is barely moving - or that the uint8
@@ -89,15 +95,21 @@ def build_nowcast(session: requests.Session, now: datetime, gfs_by_valid: dict):
             print(f"nowcast: flow p99 {p99:.2f}px is suspiciously still",
                   file=sys.stderr)
 
+        def upsample(dbz):
+            rate = obs.dbz_to_rain(np.maximum(dbz, obs.FILL))
+            hi = cv2.resize(rate, (grid.shape[1], grid.shape[0]),
+                            interpolation=cv2.INTER_LINEAR)
+            return obs.rain_to_dbz(hi)
+
         frames = []
         for minute in range(0, NOWCAST_HORIZON_MIN + 1, NOWCAST_STEP_MIN):
             valid = obs_time + timedelta(minutes=minute)
-            advected = nowcast.advect(last_dbz, flow, minute / 30.0)
+            advected = nowcast.advect(last_dbz, flow, minute / 30.0, wrap=True)
             gfs = nowcast.gfs_at(gfs_by_valid, valid)
             if gfs is None:
                 field, source = advected, "obs"
             else:
-                field = nowcast.blend(advected, gfs, mask, minute)
+                field = nowcast.blend(advected, upsample(gfs), mask, minute)
                 source = "obs" if nowcast.blend_weight(minute) >= 1.0 else "blend"
             name = f"now_{valid:%Y%m%d%H%M}.png"
             render_png(field, FRAMES_DIR / name)

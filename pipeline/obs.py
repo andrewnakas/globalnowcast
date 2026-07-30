@@ -115,6 +115,14 @@ class Grid:
 
 GLOBAL = Grid(GFS_LAT, GFS_LON, "global")
 
+# The nowcast's display grid: 0.1 degree (~11 km). The satellite source is 0.02
+# degrees natively, so this carries real observed structure the 0.25 GFS grid
+# averages away - full-global 0.02 does not fit the runner (ml/PLAN-2KM.md), but
+# 0.1 is 5x5 source pixels per cell and well inside budget. GFS frames stay on
+# their native 0.25 grid; only the observation-driven product uses this.
+GLOBAL_HI = Grid(np.linspace(90.0, -90.0, 1801),
+                 np.arange(-180.0, 180.0, 0.1), "global0.1")
+
 # Benchmark-comparable windows. CONUS matches the domain DGMR and NowcastNet are
 # scored on, and MRMS radar truth is available there (see ml/data/mrms.py).
 CONUS_2KM = Grid.window(50.0, 24.0, -125.0, -66.0, 0.02, "conus2km")

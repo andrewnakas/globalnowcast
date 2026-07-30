@@ -127,10 +127,14 @@ def estimate_flow(prev_dbz: np.ndarray, last_dbz: np.ndarray,
     return flow.astype(np.float32)
 
 
-def advect(field: np.ndarray, flow: np.ndarray, steps: float) -> np.ndarray:
+def advect(field: np.ndarray, flow: np.ndarray, steps: float,
+           wrap: bool | None = None) -> np.ndarray:
     """Backward semi-Lagrangian transport: sample where each cell's air came from.
 
     Fractional `steps` is fine, which is how sub-hourly frames are produced.
+    `wrap` marks a longitude-periodic grid; by default only the classic 0.25
+    global grid wraps, so callers on other global grids must say so - a regional
+    window must NOT, or Atlantic weather advects into the Pacific.
     """
     import cv2
 
@@ -138,9 +142,7 @@ def advect(field: np.ndarray, flow: np.ndarray, steps: float) -> np.ndarray:
         return field.astype(np.float32)
 
     h, w = field.shape
-    # Longitude only wraps on a global grid; a regional window has real edges, and
-    # wrapping one would advect Atlantic weather into the Pacific.
-    pad = WRAP_PAD if w == W else 0
+    pad = WRAP_PAD if (wrap if wrap is not None else w == W) else 0
     if pad:
         src = np.pad(field.astype(np.float32), ((0, 0), (pad, pad)), mode="wrap")
         fl = np.pad(flow, ((0, 0), (pad, pad), (0, 0)), mode="wrap")
