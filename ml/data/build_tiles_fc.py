@@ -26,14 +26,21 @@ from build_tiles import (IN_FRAMES, MIN_WET_FRAC, MIN_WET_FRAMES,  # noqa: E402
                          OUT_FRAMES, SEQ, _flush, sample_positions, to_u8)
 
 
-def sequences_from_tile_fc(tile, stride, max_per_tile):
-    """Wet-enough windows with a *forecast* HRRR channel, cached per init."""
+def sequences_from_tile_fc(tile, stride, max_per_tile, dry_keep=0.0, rng=None):
+    """Windows with a *forecast* HRRR channel, cached per init.
+
+    `dry_keep` keeps that fraction of windows failing the wet filter. Wet-only
+    curation is why the hourly model collapsed at frame scale: it never saw the
+    98.5% of a real frame that is dry, and hallucinated there. A mixed diet is
+    the untested fix.
+    """
     wet = tile.wet_fraction
     starts = []
     for s in range(0, len(tile.dbz) - SEQ, stride):
         tgt = wet[s + IN_FRAMES:s + SEQ]
         if (tgt >= MIN_WET_FRAC).sum() < MIN_WET_FRAMES:
-            continue
+            if not (dry_keep and rng is not None and rng.random() < dry_keep):
+                continue
         starts.append(s)
         if len(starts) >= max_per_tile:
             break
@@ -77,6 +84,8 @@ def main() -> int:
                     help="keep 0: same tile positions as the training build")
     ap.add_argument("--out", default="ml/tiles_fc")
     ap.add_argument("--shard-size", type=int, default=2000)
+    ap.add_argument("--dry-keep", type=float, default=0.0,
+                    help="fraction of dry windows to keep alongside the wet ones")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -100,7 +109,9 @@ def main() -> int:
             print(f"[{k}/{args.tiles}] tile ({i},{j}) failed: {e}", file=sys.stderr)
             continue
         seen += 1
-        got = sequences_from_tile_fc(tile, args.stride, args.max_per_tile)
+        got = sequences_from_tile_fc(tile, args.stride, args.max_per_tile,
+                                     dry_keep=args.dry_keep,
+                                     rng=np.random.default_rng(args.seed * 100003 + k))
         for x, y, h, t in got:
             x_buf.append(x)
             y_buf.append(y)

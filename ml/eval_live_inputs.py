@@ -36,7 +36,7 @@ import hrrr  # noqa: E402
 import mrms  # noqa: E402
 import obs  # noqa: E402
 from export_pm import pm_apply  # noqa: E402
-from metrics import contingency, csi  # noqa: E402
+from metrics import contingency, csi, fss  # noqa: E402
 
 U8_LO, U8_HI = -30.0, 60.0
 THRESHOLDS = {"1 mm/h": 23.0, "4 mm/h": 32.6, "8 mm/h": 37.5}
@@ -50,6 +50,31 @@ def to_u8(dbz):
 
 def from_u8(u8):
     return u8.astype(np.float32) * ((U8_HI - U8_LO) / 255.0) + U8_LO
+
+
+# Literature-standard diagnostics beyond CSI (Weather4cast / DGMR practice):
+# FSS at several neighbourhood scales separates "right rain, slightly displaced"
+# from "wrong rain", and the radially averaged power spectrum exposes the blur
+# that pixel scores reward - a model can beat CSI by smoothing, and RAPSD is how
+# DGMR-class papers catch it.
+FSS_LEADS = (1, 3, 6)
+FSS_WINDOWS = (5, 25, 75)  # px; ~11 / 55 / 165 km at 2.2 km
+
+
+def rapsd_highfreq(field, mask, km_per_px=2.22, cutoff_km=30.0):
+    """Power fraction at wavelengths shorter than `cutoff_km` - a blur index.
+
+    Computed on the rain-rate field with the masked area zeroed; comparing a
+    model's value against truth's on the same mask cancels the mask's own
+    spectral footprint to first order.
+    """
+    rate = np.where(mask, obs.dbz_to_rain(field), 0.0)
+    spec = np.abs(np.fft.rfft2(rate)) ** 2
+    ky = np.fft.fftfreq(rate.shape[0], d=km_per_px)[:, None]
+    kx = np.fft.rfftfreq(rate.shape[1], d=km_per_px)[None, :]
+    k = np.hypot(ky, kx)
+    total = spec.sum()
+    return float(spec[k > 1.0 / cutoff_km].sum() / total) if total else 0.0
 
 
 def run_banded(sess, x, h, band=1000, overlap=100):
@@ -148,6 +173,8 @@ def main() -> int:
     counts = {m: {lab: {k: np.zeros(3) for k in LEADS} for lab in THRESHOLDS}
               for m in models}
     wet = {"model_pm": 0.0, "hrrr": 0.0, "truth": 0.0}
+    fss_acc = {}
+    hf_acc = {}
     used = 0
 
     with ThreadPoolExecutor(args.workers) as pool:
@@ -181,6 +208,19 @@ def main() -> int:
                 wet["model_pm"] += float((pm[i][m] >= 23.0).sum())
                 wet["hrrr"] += float((h[i][m] >= 23.0).sum())
                 wet["truth"] += float((truth[i][m] >= 23.0).sum())
+                if k in FSS_LEADS:
+                    # Only the gate's two contenders: FSS over a full frame is
+                    # ~1 s per call and four models would double the runtime for
+                    # rows nobody decides on.
+                    for name in ("model_pm", "hrrr"):
+                        f = fields[name]
+                        for win in FSS_WINDOWS:
+                            fss_acc.setdefault((name, k, win), []).append(
+                                fss(f[i], truth[i], 23.0, win, m))
+                        hf_acc.setdefault((name, k), []).append(
+                            rapsd_highfreq(f[i], m))
+                    hf_acc.setdefault(("truth", k), []).append(
+                        rapsd_highfreq(truth[i], m))
             used += 1
             print(f"{anchor:%m-%d %HZ}: ok (cycle -{int(case['cycle_offset'])}h, "
                   f"{used} scored)")
@@ -199,6 +239,23 @@ def main() -> int:
         pool_row = {m: csi(*sum(counts[m][lab][k] for k in LEADS)) for m in models}
         pooled[lab] = pool_row
         print(f"{'all':>6}" + "".join(f"{pool_row[m]:>12.4f}" for m in models))
+
+    print("\nFSS at 1 mm/h (displacement-tolerant skill; windows in px, ~2.2 km each)")
+    print(f"{'lead':>6}" + "".join(f"{m + '@' + str(w):>16}"
+                                   for m in ("model_pm", "hrrr")
+                                   for w in FSS_WINDOWS))
+    for k in FSS_LEADS:
+        row = "".join(f"{np.nanmean(fss_acc.get((m, k, w), [np.nan])):>16.4f}"
+                      for m in ("model_pm", "hrrr") for w in FSS_WINDOWS)
+        print(f"{'+' + str(k) + 'h':>6}{row}")
+
+    print("\nhigh-frequency power fraction (<30 km wavelengths; below truth = blur)")
+    print(f"{'lead':>6}" + "".join(f"{m:>12}" for m in
+                                   ("model_pm", "hrrr", "truth")))
+    for k in FSS_LEADS:
+        row = "".join(f"{np.nanmean(hf_acc.get((m, k), [np.nan])):>12.4f}"
+                      for m in ("model_pm", "hrrr", "truth"))
+        print(f"{'+' + str(k) + 'h':>6}{row}")
 
     ratio = wet["model_pm"] / max(wet["truth"], 1.0)
     gain = pooled["1 mm/h"]["model_pm"] / max(pooled["1 mm/h"]["hrrr"], 1e-9) - 1
