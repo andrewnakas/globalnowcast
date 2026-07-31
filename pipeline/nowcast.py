@@ -157,8 +157,8 @@ def advect(field: np.ndarray, flow: np.ndarray, steps: float,
     return warped[:, pad:pad + w] if pad else warped
 
 
-def blend_weight(lead_min: float, crossover: float = BLEND_CROSSOVER_MIN,
-                 tau: float = BLEND_TAU_MIN, hold: float = OBS_ONLY_MIN) -> float:
+def blend_weight(lead_min: float, crossover: float | None = None,
+                 tau: float | None = None, hold: float | None = None) -> float:
     """Weight on the observation-based field; the model takes the remainder.
 
     Held at exactly 1 for the first stretch, then rescaled so it leaves 1 smoothly
@@ -166,7 +166,15 @@ def blend_weight(lead_min: float, crossover: float = BLEND_CROSSOVER_MIN,
     animation. The defaults are the satellite/GFS fit; the CONUS radar/HRRR layer
     passes its own much earlier crossover (radar loses to HRRR around +2 h, the
     satellite only loses to GFS around +4.5 h).
+
+    Defaults resolve from the module globals at call time, not in the signature:
+    verify/run.py sweeps crossovers by patching BLEND_CROSSOVER_MIN, and
+    signature defaults bind at import, which silently froze every swept variant
+    to the shipped value.
     """
+    crossover = BLEND_CROSSOVER_MIN if crossover is None else crossover
+    tau = BLEND_TAU_MIN if tau is None else tau
+    hold = OBS_ONLY_MIN if hold is None else hold
     if lead_min <= hold:
         return 1.0
     logistic = lambda t: 1.0 / (1.0 + np.exp((t - crossover) / tau))

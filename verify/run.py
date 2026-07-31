@@ -42,7 +42,8 @@ from render import decode_refc  # noqa: E402
 
 CACHE = Path(__file__).resolve().parent / "cache"
 MODELS = ("persistence", "advection", "gfs", "blend")
-TROPICS = np.abs(obs.GFS_LAT) < 23.5
+# TROPICS is defined below, from GRID - a regional mask hard-coded to one
+# latitude axis breaks the moment the verified grid changes.
 # Set via --sweep-crossover to compare candidate handover leads in one pass.
 SWEEP_CROSSOVERS: tuple[float, ...] = ()
 
@@ -79,6 +80,7 @@ def _cached(name: str, build, attempts: int = 3):
 # Cache keys carry the grid name so 0.25 and 0.1 cases never mix.
 GRID = obs.GLOBAL_HI
 KM_PER_PX = 0.1 * 111.0
+TROPICS = np.abs(GRID.lat) < 23.5
 
 
 def load_obs(session, when, levels=(5,)):
