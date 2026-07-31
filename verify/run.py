@@ -290,6 +290,36 @@ def main() -> int:
                 for h, mi, f, _ in b]
         print(f"  {m:>12}: " + "  ".join(f"{v:.2f}" for v in vals))
 
+    if SWEEP_CROSSOVERS:
+        # Rank swept crossovers across EVERY lead x threshold cell, not by
+        # eyeballing one threshold. The optimum genuinely reverses with
+        # intensity - shorter handovers win at dBZ>=20 while longer ones win at
+        # dBZ>=5, which is the threshold the map renders - so a candidate picked
+        # off the heavy-rain table alone will visibly flood the light-rain field
+        # with model drizzle. Mean across cells plus a worst-cell column is the
+        # comparison that survives that.
+        print("\n=== crossover ranking (all lead x threshold cells) ===")
+        print(f"{'setting':>10}{'mean CSI':>10}{'worst vs shipped':>18}"
+              f"{'cells >= advection':>20}")
+        cells = [(lead, thr) for lead in leads for thr in thresholds]
+        ranked = []
+        for m in [f"x{c:g}" for c in SWEEP_CROSSOVERS] + ["blend"]:
+            vals, worst, at_least_adv = [], float("inf"), 0
+            for lead, thr in cells:
+                v = csi(*pooled[(m, lead, thr, "global")][:3])
+                base = csi(*pooled[("blend", lead, thr, "global")][:3])
+                adv = csi(*pooled[("advection", lead, thr, "global")][:3])
+                vals.append(v)
+                worst = min(worst, v - base)
+                at_least_adv += v >= adv - 1e-9
+            ranked.append((float(np.mean(vals)), m, worst, at_least_adv))
+        for mean, m, worst, adv_ok in sorted(ranked, reverse=True):
+            label = f"{m} (shipped)" if m == "blend" else m
+            print(f"{label:>10}{mean:>10.4f}{worst:>18.4f}"
+                  f"{adv_ok:>14}/{len(cells)}")
+        print("A candidate earns a change only by winning the mean AND never "
+              "losing a cell by more than the ~0.003 replicate noise.")
+
     if args.out:
         Path(args.out).write_text(json.dumps(records, indent=1))
         print(f"\nwrote {len(records)} records to {args.out}")
