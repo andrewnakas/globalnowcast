@@ -46,16 +46,37 @@ def rain_to_dbz(rate):
 
 
 def open_imerg():
+    """Open the IMERG Late store, with timeouts sized for its chunks.
+
+    icechunk's default 3.1 s connect timeout loses this store repeatedly: the
+    chunks are global 0.1-degree fields and S3 is slow to first byte under any
+    concurrent load. Raising the timeouts turns a hard failure into a wait.
+    """
     import icechunk
     import xarray as xr
+
+    cfg = icechunk.RepositoryConfig.default()
+    try:
+        from datetime import timedelta as _td
+
+        cfg.storage = icechunk.StorageSettings(
+            retries=icechunk.StorageRetriesSettings(max_tries=8),
+            timeouts=icechunk.StorageTimeoutSettings(
+                connect_timeout=_td(seconds=30),
+                read_timeout=_td(seconds=180)))
+    except Exception as e:  # noqa: BLE001 - fall back to library defaults
+        print(f"  (storage settings unavailable: {type(e).__name__})",
+              file=sys.stderr)
+        cfg = None
 
     for pfx in PREFIXES:
         try:
             st = icechunk.s3_storage(bucket=BUCKET, prefix=pfx,
                                      region="us-west-2", anonymous=True)
-            ds = xr.open_zarr(
-                icechunk.Repository.open(st).readonly_session("main").store,
-                consolidated=False, chunks=None)
+            repo = (icechunk.Repository.open(st, config=cfg) if cfg
+                    else icechunk.Repository.open(st))
+            ds = xr.open_zarr(repo.readonly_session("main").store,
+                              consolidated=False, chunks=None)
             print(f"imerg store: {pfx}")
             return ds
         except Exception as e:  # noqa: BLE001
@@ -72,7 +93,19 @@ def imerg_dbz(ds, when):
     if abs((sel.time.values - np.datetime64(when, "ns"))
            / np.timedelta64(1, "m")) > 20:
         return None
-    rate = np.nan_to_num(sel.values.astype(np.float32)) * 3600.0
+    # One read still fails often enough to lose a whole run; retry rather than
+    # abandon the valid time.
+    for attempt in range(4):
+        try:
+            rate = np.nan_to_num(sel.values.astype(np.float32)) * 3600.0
+            break
+        except Exception as e:  # noqa: BLE001
+            if attempt == 3:
+                print(f"  {when}: {type(e).__name__} after 4 tries",
+                      file=sys.stderr)
+                return None
+            import time
+            time.sleep(5 * (attempt + 1))
     # Standardise to the GFS convention (row 0 = 90N), then downsample 0.1 ->
     # 0.25 in rate space: a 2x2 block mean first (exact), then a small bilinear
     # zoom for the remaining 1.25x - averaging before interpolating keeps the

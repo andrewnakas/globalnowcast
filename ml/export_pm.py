@@ -18,15 +18,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import torch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "verify"))
-
-from metrics import contingency, csi  # noqa: E402
-from nowcast_model import NowcastUNet, probability_match  # noqa: E402
-from train_nowcast import Tiles, all_months, from_u8  # noqa: E402
 
 THRESHOLDS = {"1 mm/h": 23.0, "4 mm/h": 32.6, "8 mm/h": 37.5}
 TOL = 0.003  # replicate noise at 48k data; a faithful port sits far below this
@@ -48,6 +43,14 @@ def pm_apply(pred: np.ndarray, ref_q: np.ndarray) -> np.ndarray:
 
 
 def main() -> int:
+    # Deferred: pm_apply above is pure numpy and gets imported by torch-free
+    # serving/eval code; only the export+verify path needs torch.
+    import torch
+
+    from metrics import contingency, csi
+    from nowcast_model import NowcastUNet, probability_match
+    from train_nowcast import Tiles, all_months, from_u8
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--tables", default="ml/model/pm_tables.pt")
     ap.add_argument("--ckpt", default="ml/model/nowcast_all32_s1.pt")
