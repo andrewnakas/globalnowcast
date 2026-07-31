@@ -4,7 +4,6 @@ import tempfile
 
 import numpy as np
 import pygrib
-from PIL import Image
 
 # Classic NWS reflectivity palette, one color per 5 dBZ bin from 5 to 75+.
 NWS_COLORS = [
@@ -47,6 +46,11 @@ def render_png(data: np.ndarray, path: str, alpha: np.ndarray | None = None) -> 
     """Colormap `data` to a transparent PNG. `alpha` (0..1, same shape) scales the
     palette's own alpha - regional overlays use it to feather their edges so the
     boundary between data sources never shows as a hard seam."""
+    # Deferred: decode_refc is imported by dataset builders on boxes that have
+    # pygrib but no Pillow, and a module-level PIL import made those fail at
+    # import time for a function they never call.
+    from PIL import Image
+
     rgba = LUT[np.digitize(data, BINS)]
     if alpha is not None:
         rgba[..., 3] = (rgba[..., 3] * np.clip(alpha, 0.0, 1.0)).astype(np.uint8)
