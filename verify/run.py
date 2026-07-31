@@ -73,10 +73,19 @@ def _cached(name: str, build, attempts: int = 3):
     return data
 
 
+# The nowcast product renders at 0.1 degrees (pipeline/main.build_nowcast), so
+# that is the grid its handover has to be fitted on: at 0.25 the same motion is
+# sub-pixel for longer, which flatters advection's decay and moves the optimum.
+# Cache keys carry the grid name so 0.25 and 0.1 cases never mix.
+GRID = obs.GLOBAL_HI
+KM_PER_PX = 0.1 * 111.0
+
+
 def load_obs(session, when, levels=(5,)):
     """Observation at `when`, complete frames only so the domain is stable."""
     def build():
-        got = obs.fetch_frame(session, when, levels=levels, latency_min=0)
+        got = obs.fetch_frame(session, when, levels=levels, latency_min=0,
+                              grid=GRID)
         if got is None:
             return None
         dbz, mask, valid, _ = got
@@ -84,15 +93,29 @@ def load_obs(session, when, levels=(5,)):
             return None  # too far from the requested time to be that case's truth
         return {"dbz": dbz, "mask": mask}
 
-    return _cached(f"obs_{when:%Y%m%d%H%M}", build)
+    return _cached(f"obs_{GRID.name}_{when:%Y%m%d%H%M}", build)
 
 
 def load_gfs(session, cycle, fh):
-    def build():
-        return {"dbz": np.maximum(decode_refc(fetch_refc(session, cycle, fh)),
-                                  obs.FILL).astype(np.float32)}
+    """GFS REFC on the verification grid.
 
-    got = _cached(f"gfs_{cycle:%Y%m%d%H}_f{fh:03d}", build)
+    GFS is native 0.25; production upsamples it in rain-rate space where the
+    blend consumes it (never in dBZ, which is logarithmic), so this does the
+    same rather than comparing against a differently-resampled field.
+    """
+    def build():
+        import cv2
+
+        dbz = np.maximum(decode_refc(fetch_refc(session, cycle, fh)),
+                         obs.FILL).astype(np.float32)
+        if dbz.shape != GRID.shape:
+            rate = cv2.resize(obs.dbz_to_rain(dbz),
+                              (GRID.shape[1], GRID.shape[0]),
+                              interpolation=cv2.INTER_LINEAR)
+            dbz = obs.rain_to_dbz(rate)
+        return {"dbz": dbz}
+
+    got = _cached(f"gfs_{GRID.name}_{cycle:%Y%m%d%H}_f{fh:03d}", build)
     return got["dbz"] if got else None
 
 
@@ -104,7 +127,8 @@ def run_case(session, t0, leads, gap_min=30):
         print(f"  {t0:%Y-%m-%d %H:%MZ}: observations unavailable, skipping")
         return None
 
-    flow = nowcast.estimate_flow(prior["dbz"], anchor["dbz"], gap_min)
+    flow = nowcast.estimate_flow(prior["dbz"], anchor["dbz"], gap_min,
+                                 km_per_px=KM_PER_PX)
     p99 = float(np.percentile(np.hypot(flow[..., 0], flow[..., 1]), 99))
     if p99 < 1.0:
         # Near-zero motion means the uint8 conversion regressed and "advection"
@@ -125,7 +149,9 @@ def run_case(session, t0, leads, gap_min=30):
             continue
 
         steps = lead / 30.0
-        adv = nowcast.advect(anchor["dbz"], flow, steps)
+        # Explicit wrap: the default keys off the classic 0.25 grid's width, so
+        # a 0.1 global grid would silently grow a dry seam at the antimeridian.
+        adv = nowcast.advect(anchor["dbz"], flow, steps, wrap=True)
         mask = anchor["mask"] & truth["mask"]
         fields = {
             "persistence": anchor["dbz"],
