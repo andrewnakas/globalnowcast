@@ -65,23 +65,56 @@ function preload(frames) {
 }
 
 function loadProduct(product) {
-  const frames = state.manifest.products[product];
-  if (!frames || !frames.length) return; // e.g. nowcast absent after an obs outage
+  // Fallback for a manifest predating the unified timeline (kept so a rollback
+  // of the pipeline still renders something rather than an empty page).
+  const frames = state.manifest.products?.[product];
+  if (!frames || !frames.length) return;
   state.product = product;
   state.frames = frames;
   state.images = preload(state.frames);
   state.index = 0;
   el("scrub").max = String(Math.max(0, state.frames.length - 1));
-  if (state.playing) startTimer(); // this product may animate at a different rate
-  document.querySelectorAll(".products button").forEach((b) =>
-    b.classList.toggle("active", b.dataset.product === product)
-  );
+  buildTrack();
+  if (state.playing) startTimer();
   show(0);
+}
+
+function buildTrack() {
+  // Paint one segment per frame in its source colour. The mix of observation,
+  // blend and model *is* the product, so showing it on the track means the
+  // structure of the forecast is legible before anything is played.
+  const track = el("track");
+  track.innerHTML = "";
+  state.frames.forEach((f) => {
+    const seg = document.createElement("i");
+    seg.className = f.source === "obs" ? "obs"
+      : f.source === "blend" ? "blend" : "gfs";
+    if (f.conus) seg.className += " conus";
+    track.appendChild(seg);
+  });
+
+  // Hour ticks, spaced by real time rather than by frame index: the timeline
+  // switches from 15-minute to hourly steps partway along, so evenly spaced
+  // labels would misrepresent where you are.
+  const ticks = el("ticks");
+  ticks.innerHTML = "";
+  if (!state.frames.length) return;
+  const t0 = parseUTC(state.frames[0].valid);
+  const span = parseUTC(state.frames[state.frames.length - 1].valid) - t0;
+  if (span <= 0) return;
+  for (const h of [0, 6, 12, 24, 36, 48]) {
+    const at = h * 36e5;
+    if (at > span) continue;
+    const b = document.createElement("b");
+    b.textContent = h === 0 ? "now" : `+${h}h`;
+    b.style.left = `${(at / span) * 100}%`;
+    ticks.appendChild(b);
+  }
 }
 
 function loadTimeline() {
   // One seamless 0-48h sequence: 15-minute satellite nowcast, then hourly GFS,
-  // with the CONUS radar-model layer stacked wherever the manifest carries it.
+  // with the CONUS radar layer stacked wherever the manifest carries it.
   state.product = "timeline";
   state.frames = state.manifest.timeline;
   state.images = preload(state.frames);
@@ -94,10 +127,14 @@ function loadTimeline() {
   if (state.manifest.conus) {
     conusOverlay.setBounds(L.latLngBounds(state.manifest.conus.bounds));
     conusOverlay.addTo(map);
+  } else {
+    // No radar layer this run: dim its legend entry rather than implying it.
+    const chip = document.querySelector('#sources [data-src="radar"]');
+    if (chip) chip.classList.add("off");
   }
   state.index = 0;
   el("scrub").max = String(Math.max(0, state.frames.length - 1));
-  document.querySelector(".products").hidden = true;
+  buildTrack();
   show(0);
 }
 
@@ -126,7 +163,10 @@ function show(i) {
   const lead = mins <= 0 ? "now"
     : mins < 120 ? `+${mins}m`
     : `+${Math.round(mins / 60)}h`;
-  el("valid-time").textContent = `${fmt.format(d)}  ·  ${lead}`;
+  el("valid-text").textContent = fmt.format(d);
+  const chip = el("lead-chip");
+  chip.textContent = lead;
+  chip.className = lead === "now" ? "now" : "";
 
   const ml = state.manifest.corrected ? " · ML-corrected" : "";
   const label = { obs: "satellite obs", blend: "obs + GFS blend", gfs: "GFS" };
@@ -134,6 +174,13 @@ function show(i) {
   el("cycle-info").textContent = nowcasting
     ? `${label[frame.source] || "GFS"}${conus} · obs ${state.manifest.obs_time}${ml}`
     : `GFS ${state.manifest.cycle}${conus} · built ${state.manifest.generated_at.slice(11, 16)}Z${ml}`;
+
+  // Highlight whichever sources are actually on screen for this frame.
+  document.querySelectorAll("#sources span[data-src]").forEach((s) => {
+    const src = s.dataset.src;
+    const on = src === "radar" ? Boolean(frame.conus) : src === frame.source;
+    s.style.opacity = on ? "1" : "0.4";
+  });
 }
 
 function frameDelay() {
@@ -174,8 +221,10 @@ function wire() {
     overlay.setOpacity(state.opacity);
     if (state.frames[state.index]?.conus) conusOverlay.setOpacity(state.opacity);
   };
-  document.querySelectorAll(".products button").forEach((b) => {
-    b.onclick = () => loadProduct(b.dataset.product);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === " ") { e.preventDefault(); play(); }
+    else if (e.key === "ArrowLeft") show(state.index - 1);
+    else if (e.key === "ArrowRight") show(state.index + 1);
   });
 }
 
@@ -189,15 +238,12 @@ async function init() {
     if (state.manifest.timeline?.length) {
       loadTimeline();
     } else {
-      // Older manifest: hide products this run didn't produce, then open the most
-      // skilful one there is.
-      let first = null;
-      document.querySelectorAll(".products button").forEach((b) => {
-        const has = Boolean(state.manifest.products[b.dataset.product]?.length);
-        b.hidden = !has;
-        if (has && !first) first = b.dataset.product;
-      });
-      loadProduct(first || "rapid");
+      // Manifest predating the unified timeline: fall back to the most skilful
+      // product it does carry.
+      const first = ["nowcast", "rapid", "extended"]
+        .find((p) => state.manifest.products?.[p]?.length);
+      if (!first) throw new Error("manifest has no frames");
+      loadProduct(first);
     }
     el("status").classList.add("hidden");
   } catch (e) {

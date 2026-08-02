@@ -12,36 +12,46 @@
   <div id="map"></div>
 
   <header id="topbar">
-    <div class="brand">Global Nowcast <span>REFC composite</span></div>
+    <div class="brand">Global Nowcast <span>0–48 h precipitation</span></div>
     <div class="meta">
-      <span id="valid-time">—</span>
+      <span id="valid-time"><span id="valid-text">—</span><span id="lead-chip"></span></span>
       <span id="cycle-info" class="dim">—</span>
     </div>
   </header>
 
   <div id="panel">
-    <div class="products">
-      <button data-product="nowcast">Nowcast · 4h</button>
-      <button data-product="rapid" class="active">Rapid · 18h</button>
-      <button data-product="extended">Extended · 48h</button>
-    </div>
-
     <div class="controls">
-      <button id="play" title="Play/Pause">▶</button>
+      <button id="play" title="Play / pause">▶</button>
       <button id="step-back" title="Step back">⏮</button>
       <button id="step-fwd" title="Step forward">⏭</button>
-      <input type="range" id="scrub" min="0" max="0" value="0">
+      <div class="timeline">
+        <div id="track"></div>
+        <input type="range" id="scrub" min="0" max="0" value="0"
+               aria-label="Forecast time">
+        <div id="ticks"></div>
+      </div>
     </div>
 
-    <div class="row">
-      <label>Opacity</label>
-      <input type="range" id="opacity" min="20" max="100" value="80">
-    </div>
+    <div class="footer">
+      <div class="sources" id="sources">
+        <span data-src="obs"><i class="obs"></i>satellite obs</span>
+        <span data-src="blend"><i class="blend"></i>obs + model blend</span>
+        <span data-src="gfs"><i class="gfs"></i>GFS</span>
+        <span data-src="radar"><i class="radar"></i>CONUS radar</span>
+      </div>
 
-    <div class="row legend">
-      <label>dBZ</label>
-      <div id="legend-bar"></div>
-      <div class="legend-scale"><span>5</span><span>35</span><span>75</span></div>
+      <div class="row">
+        <label>Opacity</label>
+        <input type="range" id="opacity" min="20" max="100" value="80">
+      </div>
+
+      <div class="row legend">
+        <label>dBZ</label>
+        <div class="legend-wrap">
+          <div id="legend-bar"></div>
+          <div class="legend-scale"><span>5</span><span>35</span><span>75</span></div>
+        </div>
+      </div>
     </div>
   </div>
 
