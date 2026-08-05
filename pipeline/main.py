@@ -50,6 +50,29 @@ CONUS_HORIZON_MIN = 360.0
 # wet area, which is the double-counting this project has rejected before.
 AIFS_MIN_LEAD_H = 6  # inside this the blend owns the frame; leave it raw
 
+# Model disagreement is a real skill signal, but it is NOT rendered, and the
+# reason is worth recording so nobody rebuilds this.
+#
+# Binned over 4.8M forecast-wet cells (ml/eval_spread_skill.py) by relative
+# spread |aifs-gfs| / mean, the relationship is clean and monotonic:
+#
+#   spread bin   hit rate   FAR
+#   0.00-0.51      0.401    0.599
+#   0.96-1.36      0.342    0.658
+#   1.71-2.00      0.239    0.761
+#
+# Rain forecast where the models agree verifies 68% more often than where they
+# disagree. That is genuine information. It just does not survive contact with
+# a map: four calibrations (relative spread at 1.36, 1.71, 1.9, then absolute
+# dBZ difference at 25) all faded 55-73% of visible pixels, because the two
+# models really do disagree about most light rain, and light rain is most of
+# what is drawn - 40% of visible pixels sit in the faintest 5-10 dBZ bin.
+# Fading the majority of a map communicates nothing, and no threshold fixes
+# that without simply hiding the disagreement.
+#
+# The signal is better exposed as an opt-in layer than baked into the base
+# field's alpha. Left unbuilt deliberately rather than shipped half-calibrated.
+
 
 def build_frame(session: requests.Session, cycle: datetime, lead: int,
                 keep: dict | None = None, aifs_by_valid: dict | None = None):
@@ -64,13 +87,15 @@ def build_frame(session: requests.Session, cycle: datetime, lead: int,
             # Averaged in rain rate, never dBZ, and only where both models have
             # data - a missing AIFS frame simply leaves GFS alone.
             a = (aifs_by_valid or {}).get(valid)
+            alpha = None
             if a is not None and keep is None:
                 import obs as _obs
 
-                rate = 0.5 * (_obs.dbz_to_rain(np.maximum(field, _obs.FILL))
-                              + _obs.dbz_to_rain(a))
-                field = _obs.rain_to_dbz(rate)
-            render_png(field, FRAMES_DIR / name)
+                gfs_dbz = np.maximum(field, _obs.FILL)
+                aifs_dbz = np.maximum(a, _obs.FILL)
+                field = _obs.rain_to_dbz(
+                    0.5 * (_obs.dbz_to_rain(gfs_dbz) + _obs.dbz_to_rain(aifs_dbz)))
+            render_png(field, FRAMES_DIR / name, alpha=alpha)
             if keep is not None:
                 # Stash the corrected field for the blend so the nowcast sees
                 # exactly what shipped, without a second fetch.

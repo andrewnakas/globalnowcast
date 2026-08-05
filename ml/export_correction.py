@@ -7,6 +7,7 @@ the house style: a silent export mismatch is a quietly worse forecast.
 
     python ml/export_correction.py
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -27,14 +28,21 @@ U8_LO, U8_HI = -30.0, 60.0
 
 
 def main() -> int:
-    ck = torch.load("ml/model/refc_correction_v2.pt", map_location="cpu",
-                    weights_only=False)
+    # Paths are arguments, not literals: the weekly retrain drives this with a
+    # candidate checkpoint, and hardcoding meant editing the file in place on
+    # the training box - which promptly drifted from the copy in git.
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ckpt", default="ml/model/refc_correction_v3.pt")
+    ap.add_argument("--out", default=None, help="defaults to <ckpt>.onnx")
+    args = ap.parse_args()
+
+    ck = torch.load(args.ckpt, map_location="cpu", weights_only=False)
     net = RefcUNet(base=ck["base"], cin=ck["cin"])
     net.load_state_dict(ck["state_dict"])
     net.eval()
     print(f"checkpoint: epoch {ck['epoch']}, mean CSI gain {ck['mean_gain']:+.4f}")
 
-    out = Path("ml/model/refc_correction_v2.onnx")
+    out = Path(args.out or str(Path(args.ckpt).with_suffix(".onnx")))
     x = torch.zeros(1, 3, 100, 100)  # not a multiple of 4: pad path gets traced
     dyn = {0: "batch", 2: "h", 3: "w"}
     kw = dict(input_names=["x"], output_names=["residual"],
