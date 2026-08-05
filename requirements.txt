@@ -5,3 +5,9 @@ pillow==11.0.0
 onnxruntime==1.20.1  # CPU inference for the optional ML REFC correction (pipeline/correct.py)
 h5py==3.16.0  # reads the netCDF4 satellite rain-rate files (pipeline/obs.py)
 opencv-python-headless==5.0.0.93  # optical flow + warping (pipeline/nowcast.py); headless: no GUI libs on the runner
+# ECMWF AIFS arm (pipeline/aifs.py). ~32 MB of wheels; the store is icechunk on
+# anonymous S3, so xarray+zarr come along. Optional at runtime: a missing wheel
+# or a failed read leaves the GFS-only product untouched.
+icechunk==2.1.2
+xarray==2026.7.0
+zarr==3.3.0

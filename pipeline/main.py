@@ -34,9 +34,25 @@ CONUS_FEATHER_PX = 37
 CONUS_FADE_FROM_MIN = 300.0
 CONUS_HORIZON_MIN = 360.0
 
+# Multi-model mean of GFS and ECMWF AIFS, in rain rate. Measured on 16 harvested
+# valid times against RRQPE (ml/eval_aifs_blend.py), pooled over 6-48h leads:
+#
+#   arm     5dBZ    10dBZ   20dBZ   30dBZ   wet-bias
+#   gfs     0.1684  0.1763  0.1912  0.0908  1.45
+#   aifs    0.2087  0.2370  0.2241  0.0547  1.39
+#   mean    0.1929  0.2316  0.2278  0.0853  1.42
+#
+# AIFS alone is much better at ordinary rain and far worse at heavy cores (it
+# barely exceeds 40 dBZ anywhere), so swapping outright would gut the severe
+# signal. The mean keeps most of AIFS's gain at every threshold the map renders
+# while giving back only 6% at 30 dBZ, and it holds at every lead from +6 to
+# +48h. A per-cell max scored better at 30 dBZ but painted 2.28x the observed
+# wet area, which is the double-counting this project has rejected before.
+AIFS_MIN_LEAD_H = 6  # inside this the blend owns the frame; leave it raw
+
 
 def build_frame(session: requests.Session, cycle: datetime, lead: int,
-                keep: dict | None = None):
+                keep: dict | None = None, aifs_by_valid: dict | None = None):
     valid = cycle + timedelta(hours=lead)
     name = f"refc_{valid:%Y%m%d%H}.png"
     for attempt in range(3):
@@ -44,6 +60,16 @@ def build_frame(session: requests.Session, cycle: datetime, lead: int,
             grib = fetch_refc(session, cycle, lead)
             field = correct(decode_refc(grib), lead_h=lead,
                             blend_frame=keep is not None)
+            # Multi-model mean with AIFS past the satellite blend's window.
+            # Averaged in rain rate, never dBZ, and only where both models have
+            # data - a missing AIFS frame simply leaves GFS alone.
+            a = (aifs_by_valid or {}).get(valid)
+            if a is not None and keep is None:
+                import obs as _obs
+
+                rate = 0.5 * (_obs.dbz_to_rain(np.maximum(field, _obs.FILL))
+                              + _obs.dbz_to_rain(a))
+                field = _obs.rain_to_dbz(rate)
             render_png(field, FRAMES_DIR / name)
             if keep is not None:
                 # Stash the corrected field for the blend so the nowcast sees
@@ -185,10 +211,30 @@ def main() -> None:
     keep_before = cycle + timedelta(hours=offset + NOWCAST_GFS_HOURS)
     gfs_by_valid: dict[datetime, np.ndarray] = {}
 
+    # AIFS for the frames past the satellite blend's window. Fetched once, up
+    # front, because the store is chunked per init: reading each 6-hourly step
+    # once and interpolating costs ~110s for the whole horizon, where a
+    # per-frame read would cost that many times over.
+    t_aifs = time.time()
+    aifs_by_valid: dict[datetime, np.ndarray] = {}
+    try:
+        import aifs as aifs_mod
+
+        want = [cycle + timedelta(hours=l) for l in leads
+                if cycle + timedelta(hours=l) > keep_before]
+        got = aifs_mod.fetch(now, want)
+        if got:
+            aifs_by_valid, aifs_init = got
+            print(f"aifs: {len(aifs_by_valid)} frames from {aifs_init:%Y-%m-%d %HZ}")
+    except Exception as e:  # noqa: BLE001 - AIFS is a bonus arm, never a blocker
+        print(f"aifs: skipped ({e})", file=sys.stderr)
+    t_aifs = time.time() - t_aifs
+
     def one(lead: int):
         valid = cycle + timedelta(hours=lead)
         return build_frame(session, cycle, lead,
-                           keep=gfs_by_valid if valid <= keep_before else None)
+                           keep=gfs_by_valid if valid <= keep_before else None,
+                           aifs_by_valid=aifs_by_valid)
 
     t_gfs = time.time()
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -232,6 +278,7 @@ def main() -> None:
             "extended": good,
         },
         "timeline": timeline,
+        "multimodel": bool(aifs_by_valid),
     }
     if conus_info:
         manifest["conus"] = conus_info
@@ -242,8 +289,8 @@ def main() -> None:
     print(f"built {len(good)}/{len(leads)} frames"
           + (f" + {len(nowcast_frames)} nowcast" if nowcast_frames else "")
           + (f" + {len(layers)} conus" if layers else ""))
-    print(f"stage times: gfs {t_gfs:.0f}s, nowcast {t_now:.0f}s, "
-          f"conus {t_conus:.0f}s")
+    print(f"stage times: aifs {t_aifs:.0f}s, gfs {t_gfs:.0f}s, "
+          f"nowcast {t_now:.0f}s, conus {t_conus:.0f}s")
 
 
 if __name__ == "__main__":

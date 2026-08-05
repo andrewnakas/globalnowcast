@@ -17,6 +17,7 @@ failure, so an outage costs the AIFS arm and leaves GFS untouched.
 import os
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -37,6 +38,11 @@ MAX_LEAD_H = 360
 # needed - but the check below stays, because a silent flip would be invisible
 # in the blend and catastrophic in the output.
 LEAD_STEP_H = 6
+# Hard cap on the whole AIFS path. It is an accuracy bonus, not a requirement,
+# and the hourly job has a 20-minute budget shared with GFS, the nowcast and the
+# CONUS layer - so a slow day for this store must cost the AIFS arm, never the
+# build. Frames already fetched when the deadline passes are still used.
+DEADLINE_S = 240.0
 # The store is rebuilt per init; a cycle lands some hours after its init time,
 # so the walk-back looks further than GFS's does.
 CYCLE_HOURS = 6
@@ -114,29 +120,46 @@ def fetch(now: datetime, valids, retries: int = 3):
             tzinfo=timezone.utc)
         lat, lon = ds.latitude.values, ds.longitude.values
 
-        # Read each needed 6-hourly step once, then interpolate: the store is
-        # chunked per init, so re-reading a step per valid time would multiply
-        # the network cost for no new data.
-        steps = {}
+        # Read each needed 6-hourly step once, then interpolate: re-reading a
+        # step per valid time would multiply the network cost for no new data.
+        #
+        # The reads run concurrently because they are network-bound, not CPU-
+        # bound: one global field is only 4 MB but takes ~2 minutes to arrive,
+        # since the store's chunking makes a single field pull far more than
+        # itself. Serially that is ~15 minutes for a 48-hour horizon, which
+        # overruns the hourly job's 20-minute budget on its own; in parallel it
+        # is bounded by the slowest single read.
+        import time as _time
+        deadline = _time.monotonic() + DEADLINE_S
 
-        def step(lead_h):
-            if lead_h in steps:
-                return steps[lead_h]
+        def read(lead_h):
             for attempt in range(retries):
+                if _time.monotonic() > deadline:
+                    return None
                 try:
                     sel = ds[VAR].sel(init_time=init,
                                       lead_time=np.timedelta64(lead_h, "h"))
                     rate = np.nan_to_num(sel.values.astype(np.float32)) * 3600.0
-                    steps[lead_h] = _to_gfs_grid(rate, lat, lon)
-                    return steps[lead_h]
+                    return _to_gfs_grid(rate, lat, lon)
                 except Exception as e:  # noqa: BLE001 - flaky chunk reads
                     if attempt == retries - 1:
                         print(f"  aifs +{lead_h}h: {type(e).__name__}",
                               file=sys.stderr)
-                        steps[lead_h] = None
                         return None
                     import time
                     time.sleep(3 * (attempt + 1))
+
+        wanted = sorted({
+            min(int(((v - init_dt).total_seconds() / 3600) // LEAD_STEP_H)
+                * LEAD_STEP_H + off, MAX_LEAD_H)
+            for v in valids
+            if 0 <= (v - init_dt).total_seconds() / 3600 <= MAX_LEAD_H
+            for off in (0, LEAD_STEP_H)})
+        with ThreadPoolExecutor(max_workers=min(8, len(wanted) or 1)) as pool:
+            steps = dict(zip(wanted, pool.map(read, wanted)))
+
+        def step(lead_h):
+            return steps.get(lead_h)
 
         out = {}
         for valid in valids:

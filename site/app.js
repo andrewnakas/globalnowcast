@@ -169,7 +169,9 @@ function show(i) {
   chip.className = lead === "now" ? "now" : "";
 
   const ml = state.manifest.corrected ? " · ML-corrected" : "";
-  const label = { obs: "satellite obs", blend: "obs + GFS blend", gfs: "GFS" };
+  const multi = state.manifest.multimodel;
+  const label = { obs: "satellite obs", blend: "obs + model blend",
+                  gfs: multi ? "GFS + ECMWF AIFS" : "GFS" };
   const conus = timeline && frame.conus ? " · CONUS: radar+HRRR" : "";
   el("cycle-info").textContent = nowcasting
     ? `${label[frame.source] || "GFS"}${conus} · obs ${state.manifest.obs_time}${ml}`
