@@ -46,6 +46,13 @@ MODELS = ("persistence", "advection", "gfs", "blend")
 # latitude axis breaks the moment the verified grid changes.
 # Set via --sweep-crossover to compare candidate handover leads in one pass.
 SWEEP_CROSSOVERS: tuple[float, ...] = ()
+# Set by --with-aifs: score the multi-model arm the site actually ships past the
+# blend window, rather than raw GFS.
+WITH_AIFS = False
+# Mirrors main.NOWCAST_GFS_HOURS: production keeps the frames the satellite
+# blend consumes on raw GFS and averages AIFS in only past that window. Defined
+# here rather than imported so verification does not drag in the build module.
+AIFS_FROM_MIN = 6 * 60
 
 
 def _cached(name: str, build, attempts: int = 3):
@@ -98,18 +105,37 @@ def load_obs(session, when, levels=(5,)):
     return _cached(f"obs_{GRID.name}_{when:%Y%m%d%H%M}", build)
 
 
-def load_gfs(session, cycle, fh):
-    """GFS REFC on the verification grid.
+def load_gfs(session, cycle, fh, valid=None, with_aifs=False):
+    """The shipped model arm on the verification grid.
 
     GFS is native 0.25; production upsamples it in rain-rate space where the
     blend consumes it (never in dBZ, which is logarithmic), so this does the
     same rather than comparing against a differently-resampled field.
+
+    With `with_aifs`, this returns the multi-model mean the site ships past the
+    blend window (9ab9e9a) rather than raw GFS - otherwise a crossover fitted
+    here would be fitted against an arm production no longer uses.
     """
     def build():
         import cv2
 
         dbz = np.maximum(decode_refc(fetch_refc(session, cycle, fh)),
                          obs.FILL).astype(np.float32)
+        if with_aifs and valid is not None:
+            try:
+                import aifs as aifs_mod
+
+                # `now` must be the GFS cycle time, not the valid time: asking
+                # for the newest init *at* the valid time would hand a +48h
+                # forecast an init from that same moment, scoring AIFS as a
+                # near-analysis and flattering it enormously.
+                got = aifs_mod.fetch(cycle, [valid])
+                if got and valid in got[0]:
+                    dbz = obs.rain_to_dbz(
+                        0.5 * (obs.dbz_to_rain(dbz)
+                               + obs.dbz_to_rain(got[0][valid])))
+            except Exception as e:  # noqa: BLE001 - fall back to raw GFS
+                print(f"  aifs {valid:%m-%d %HZ} f{fh:03d}: {e}", file=sys.stderr)
         if dbz.shape != GRID.shape:
             rate = cv2.resize(obs.dbz_to_rain(dbz),
                               (GRID.shape[1], GRID.shape[0]),
@@ -117,7 +143,10 @@ def load_gfs(session, cycle, fh):
             dbz = obs.rain_to_dbz(rate)
         return {"dbz": dbz}
 
-    got = _cached(f"gfs_{GRID.name}_{cycle:%Y%m%d%H}_f{fh:03d}", build)
+    # The arm goes in the cache key: a GFS-only field must never silently
+    # satisfy a request for the multi-model mean.
+    arm = "gfsaifs" if with_aifs else "gfs"
+    got = _cached(f"{arm}_{GRID.name}_{cycle:%Y%m%d%H}_f{fh:03d}", build)
     return got["dbz"] if got else None
 
 
@@ -146,7 +175,11 @@ def run_case(session, t0, leads, gap_min=30):
             continue
 
         fh = int(round((valid - cycle).total_seconds() / 3600))
-        gfs = load_gfs(session, cycle, fh)
+        # Production blends AIFS only past the satellite window (main.py keeps
+        # the blend's own frames on raw GFS), so the arm scored here has to
+        # follow the same rule or the fit is against a field that never ships.
+        use_aifs = WITH_AIFS and lead > AIFS_FROM_MIN
+        gfs = load_gfs(session, cycle, fh, valid=valid, with_aifs=use_aifs)
         if gfs is None:
             continue
 
@@ -182,12 +215,17 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="write per-case JSON here")
     ap.add_argument("--sweep-crossover", default=None,
                     help="also score these BLEND_CROSSOVER_MIN values, e.g. 180,270,360")
+    ap.add_argument("--with-aifs", action="store_true",
+                    help="use the shipped GFS+AIFS mean as the model arm, not "
+                         "raw GFS; required for any crossover refit since the "
+                         "handover is fitted against whatever arm ships")
     ap.add_argument("--archive", default=None, metavar="PATH",
                     help="append compact per-region counts to this JSONL archive, "
                          "skipping cases already in it (see verify/archive.py)")
     args = ap.parse_args()
 
-    global SWEEP_CROSSOVERS, MODELS
+    global SWEEP_CROSSOVERS, MODELS, WITH_AIFS
+    WITH_AIFS = args.with_aifs
     if args.sweep_crossover:
         SWEEP_CROSSOVERS = tuple(float(x) for x in args.sweep_crossover.split(","))
         MODELS = MODELS + tuple(f"x{c:g}" for c in SWEEP_CROSSOVERS)
