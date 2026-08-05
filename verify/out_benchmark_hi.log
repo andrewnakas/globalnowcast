@@ -1,0 +1,97 @@
+ML correction active: False  (false => 'gfs' is the raw model)
+case 2026-08-01 00:00Z
+  2026-08-01 00:00Z: observations unavailable, skipping
+case 2026-08-01 12:00Z
+obs: slot 2026-08-01 16:00 failed: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  + 30m  persistence=0.4940  advection=0.5671  gfs=0.2196  blend=0.5671
+  + 60m  persistence=0.3828  advection=0.4392  gfs=0.2167  blend=0.4394
+  + 90m  persistence=0.3150  advection=0.3573  gfs=0.2079  blend=0.3580
+  +120m  persistence=0.2738  advection=0.3015  gfs=0.2116  blend=0.3032
+  +240m  persistence=0.1820  advection=0.1922  gfs=0.2006  blend=0.2081
+case 2026-08-02 00:00Z
+  + 30m  persistence=0.4809  advection=0.5996  gfs=0.2212  blend=0.5996
+  + 60m  persistence=0.3728  advection=0.4683  gfs=0.2166  blend=0.4684
+  + 90m  persistence=0.3092  advection=0.3849  gfs=0.2133  blend=0.3853
+  +120m  persistence=0.2660  advection=0.3340  gfs=0.2149  blend=0.3351
+  +240m  persistence=0.1772  advection=0.2179  gfs=0.2187  blend=0.2359
+case 2026-08-02 12:00Z
+obs: slot 2026-08-02 13:00 failed: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))
+  + 30m  persistence=0.4902  advection=0.6040  gfs=0.2271  blend=0.6040
+  + 60m  persistence=0.4171  advection=0.4910  gfs=0.2244  blend=0.4910
+  + 90m  persistence=0.3260  advection=0.4019  gfs=0.2254  blend=0.4023
+  +120m  persistence=0.2870  advection=0.3527  gfs=0.2302  blend=0.3538
+  +240m  persistence=0.1892  advection=0.2302  gfs=0.2359  blend=0.2473
+case 2026-08-03 00:00Z
+  + 30m  persistence=0.4999  advection=0.6105  gfs=0.2417  blend=0.6105
+  + 60m  persistence=0.3904  advection=0.4812  gfs=0.2431  blend=0.4813
+  + 90m  persistence=0.3330  advection=0.3999  gfs=0.2420  blend=0.4003
+  +120m  persistence=0.2904  advection=0.3481  gfs=0.2435  blend=0.3494
+  +240m  persistence=0.1950  advection=0.2204  gfs=0.2359  blend=0.2394
+case 2026-08-03 12:00Z
+  + 30m  persistence=0.4890  advection=0.6049  gfs=0.2254  blend=0.6049
+  + 60m  persistence=0.3799  advection=0.4686  gfs=0.2255  blend=0.4687
+  + 90m  persistence=0.3191  advection=0.3874  gfs=0.2238  blend=0.3878
+  +120m  persistence=0.2818  advection=0.3367  gfs=0.2238  blend=0.3376
+  +240m  persistence=0.1953  advection=0.2335  gfs=0.2269  blend=0.2501
+
+=== pooled CSI, dBZ>=23, 5 case(s) ===
+lead      persistence    advection          gfs        blend
++ 30m        0.4631       0.5741       0.2016       0.5741
++ 60m        0.3590       0.4422       0.2009       0.4423
++ 90m        0.2898       0.3553       0.1975       0.3556
++120m        0.2512       0.3042       0.2003       0.3052
++240m        0.1651       0.1926       0.2007       0.2042
+
+=== pooled CSI, dBZ>=28, 5 case(s) ===
+lead      persistence    advection          gfs        blend
++ 30m        0.3993       0.5133       0.1457       0.5133
++ 60m        0.2963       0.3749       0.1448       0.3750
++ 90m        0.2318       0.2888       0.1431       0.2890
++120m        0.1972       0.2396       0.1463       0.2401
++240m        0.1204       0.1390       0.1494       0.1447
+
+=== pooled CSI, dBZ>=33, 5 case(s) ===
+lead      persistence    advection          gfs        blend
++ 30m        0.3389       0.4419       0.0784       0.4419
++ 60m        0.2369       0.3009       0.0766       0.3010
++ 90m        0.1749       0.2184       0.0742       0.2185
++120m        0.1408       0.1707       0.0745       0.1707
++240m        0.0728       0.0828       0.0778       0.0844
+
+=== pooled CSI, dBZ>=38, 5 case(s) ===
+lead      persistence    advection          gfs        blend
++ 30m        0.3568       0.4321       0.0260       0.4321
++ 60m        0.2367       0.2869       0.0276       0.2871
++ 90m        0.1591       0.1915       0.0281       0.1918
++120m        0.1175       0.1403       0.0249       0.1406
++240m        0.0425       0.0532       0.0283       0.0542
+
+=== pooled CSI by region, dBZ>=20 ===
+  tropics
+  + 30m           nan          nan          nan          nan
+  + 60m           nan          nan          nan          nan
+  + 90m           nan          nan          nan          nan
+  +120m           nan          nan          nan          nan
+  +240m           nan          nan          nan          nan
+  midlat
+  + 30m           nan          nan          nan          nan
+  + 60m           nan          nan          nan          nan
+  + 90m           nan          nan          nan          nan
+  +120m           nan          nan          nan          nan
+  +240m           nan          nan          nan          nan
+
+=== FSS (window 25), dBZ>=20 ===
+lead      persistence    advection          gfs        blend
+/Users/nakas/Documents/globalnowcast/verify/run.py:321: RuntimeWarning: Mean of empty slice
+  row = "".join(f"{np.nanmean(fss_acc[(m, lead, 20.0)]):>13.4f}" for m in MODELS)
++ 30m           nan          nan          nan          nan
++ 60m           nan          nan          nan          nan
++ 90m           nan          nan          nan          nan
++120m           nan          nan          nan          nan
++240m           nan          nan          nan          nan
+
+=== frequency bias, dBZ>=20 (>1 = too wet) ===
+   persistence: nan  nan  nan  nan  nan
+     advection: nan  nan  nan  nan  nan
+           gfs: nan  nan  nan  nan  nan
+         blend: nan  nan  nan  nan  nan

@@ -10,17 +10,28 @@ without the caveat would be flattering rather than informative.
 
 Benchmarks report rain rate, not dBZ. Converting through the same Marshall-Palmer
 relation the pipeline uses (`Z = 200 R^1.6`): 1 mm/h = 23 dBZ, 2 = 27.8, 4 = 32.6,
-8 = 37.5. Blend, 14 cases, pooled, 70N–60S:
+8 = 37.5.
 
-| lead | 1 mm/h | 2 mm/h | 4 mm/h | 8 mm/h |
-|------|--------|--------|--------|--------|
-| +30m | 0.623 | 0.570 | 0.505 | 0.480 |
-| +60m | 0.492 | 0.429 | 0.352 | 0.318 |
-| +90m | 0.407 | 0.341 | 0.263 | 0.232 |
-| +120m | 0.353 | 0.286 | 0.214 | 0.186 |
-| +240m | 0.231 | 0.170 | 0.111 | 0.089 |
+**Current, on the 0.1° grid the product actually renders** (5 cases, pooled,
+70N–60S, `--leads 30,60,90,120,240 --thresholds 23,27.8,32.6,37.5`):
 
-Reproduce with `--thresholds 23,27.8,32.6,37.5`.
+| lead | blend (1 mm/h) | advection | persistence | GFS |
+|------|------|------|------|------|
+| +30m | 0.574 | 0.574 | 0.463 | 0.202 |
+| +60m | 0.442 | 0.442 | 0.359 | 0.201 |
+| +90m | 0.356 | 0.355 | 0.290 | 0.198 |
+| +120m | 0.305 | 0.304 | 0.251 | 0.200 |
+| +240m | 0.204 | 0.193 | 0.165 | 0.201 |
+
+These are **lower than the 0.25° figures this table used to quote** (0.623 at
++30 m), and that is the grid effect below working as advertised, not a
+regression: the product moved to 0.1° in a2a5cfb, and a finer grid is a harder
+test. The old numbers are kept nowhere, because quoting the coarser grid's
+scores for a finer-grid product would flatter it.
+
+Note the blend and advection are identical until +120m and only separate at
++240m: the handover is deliberately observation-dominated, and GFS's flat ~0.20
+is what it hands over *to*.
 
 ## Why these can't be compared directly
 

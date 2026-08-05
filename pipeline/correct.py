@@ -1,6 +1,12 @@
 """ML correction of GFS REFC toward observed precipitation, for leads beyond 6 h.
 
-v2, trained on live-harvested pairs (ml/data/build_gfs_pairs.py + ml/train_correction.py):
+v3, trained on live-harvested pairs (ml/data/build_gfs_pairs.py + ml/train_correction.py):
+retrained on 77 harvested valid times (531 fields) after the harvest cron was
+repaired, up from the 51/324 v2 saw. Held-out against raw GFS with PM applied:
+5 dBZ 0.168->0.330, 10 dBZ 0.177->0.309, 20 dBZ 0.204->0.243, 30 dBZ
+0.096->0.122 - better than v2 at every threshold. Cross-checked on 10 valid
+times against IMERG Late (microwave+IR+gauge, an instrument chain it never
+trained on): +32/+32/+6/+22%, positive everywhere.
 input channels are GFS dBZ, lead/48 and |lat|/90, and the output field is
 probability-matched to the observed dBZ climatology so the L1-hedged residual does
 not delete heavy cores (measured: without PM, 30 dBZ CSI collapses 0.079 -> 0.008;
@@ -13,7 +19,7 @@ Two hard rules, both measured:
     corrected field passes through un-matched, since the reference climatology
     knows nothing about polar precipitation.
 
-No-op passthrough unless ml/model/refc_correction_v2.onnx AND correction_pm.npz
+No-op passthrough unless ml/model/refc_correction_v3.onnx AND correction_pm.npz
 exist and onnxruntime imports. Set NOWCAST_CORRECT=0 to force it off.
 """
 import os
@@ -25,7 +31,7 @@ import numpy as np
 from obs import GLOBAL
 
 _MODEL_DIR = Path(__file__).resolve().parent.parent / "ml" / "model"
-MODEL_PATH = _MODEL_DIR / "refc_correction_v2.onnx"
+MODEL_PATH = _MODEL_DIR / "refc_correction_v3.onnx"
 PM_PATH = _MODEL_DIR / "correction_pm.npz"
 DBZ_MIN, DBZ_MAX = -30.0, 80.0
 LAT_CH = np.abs(np.linspace(90.0, -90.0, 721, dtype=np.float32))[:, None] / 90.0
