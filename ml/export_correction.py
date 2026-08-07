@@ -1,6 +1,6 @@
 """Export the GFS correction model + its PM table for the hourly job.
 
-Writes ml/model/refc_correction_v2.onnx (3-channel input: dBZ, lead/48, |lat|/90,
+Writes <ckpt>.onnx by default (3-channel input: dBZ, lead/48, |lat|/90,
 dynamic H/W) and ml/model/correction_pm.npz (the observed-dBZ climatology quantiles
 fitted on the training pairs). Verifies the ONNX against torch before writing, in
 the house style: a silent export mismatch is a quietly worse forecast.

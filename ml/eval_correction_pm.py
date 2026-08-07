@@ -43,8 +43,12 @@ def main() -> int:
     print(f"obs table wet frac >=20dBZ: {(table >= 20).mean():.4f}")
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    ck = torch.load("ml/model/refc_correction_v2.pt", map_location=dev,
-                    weights_only=False)
+    # Default to the shipped checkpoint. Hardcoding v2 here meant a rerun
+    # silently scored the superseded model while appearing to validate what
+    # ships - the same git/box drift that bit export_correction.py.
+    ckpt = sys.argv[1] if len(sys.argv) > 1 else "ml/model/refc_correction_v3.pt"
+    print(f"checkpoint: {ckpt}")
+    ck = torch.load(ckpt, map_location=dev, weights_only=False)
     net = RefcUNet(base=ck["base"], cin=ck["cin"]).to(dev)
     net.load_state_dict(ck["state_dict"])
     net.eval()

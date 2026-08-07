@@ -122,8 +122,11 @@ def main() -> int:
     paths = sorted(Path("ml/gfs_pairs").glob("*.npz"))[-10:]  # held-out times
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    ck = torch.load("ml/model/refc_correction_v2.pt", map_location=dev,
-                    weights_only=False)
+    # Default to the shipped checkpoint; see eval_correction_pm.py for why
+    # this is not hardcoded to a version.
+    ckpt = sys.argv[1] if len(sys.argv) > 1 else "ml/model/refc_correction_v3.pt"
+    print(f"checkpoint: {ckpt}")
+    ck = torch.load(ckpt, map_location=dev, weights_only=False)
     net = RefcUNet(base=ck["base"], cin=ck["cin"]).to(dev)
     net.load_state_dict(ck["state_dict"])
     net.eval()

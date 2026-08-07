@@ -115,7 +115,10 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--base", type=int, default=16)
     ap.add_argument("--val-times", type=int, default=10)
-    ap.add_argument("--out", default="ml/model/refc_correction_v2.pt")
+    ap.add_argument("--out", default="ml/model/refc_correction_cand.pt",
+                    help="a candidate name by default: retrains are gated and "
+                         "promoted by ml/retrain_correction.sh, so training "
+                         "must never overwrite a shipped checkpoint")
     args = ap.parse_args()
 
     paths = sorted(Path(args.pairs).glob("*.npz"))
