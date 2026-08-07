@@ -1,0 +1,23 @@
+2026080406: scored (gefs lead 6h)
+2026080412: scored (gefs lead 12h)
+2026080418: scored (gefs lead 18h)
+2026080500: scored (gefs lead 24h)
+2026080506: scored (gefs lead 6h)
+2026080512: scored (gefs lead 12h)
+2026080518: scored (gefs lead 18h)
+2026080600: scored (gefs lead 24h)
+2026080606: scored (gefs lead 6h)
+2026080612: scored (gefs lead 12h)
+2026080618: scored (gefs lead 18h)
+2026080700: scored (gefs lead 24h)
+
+12 valid times, truth = RRQPE, GEFS lead 6-24h (5-member mean)
+                    5       10       20       30  wet vs obs
+         gfs   0.1609   0.1670   0.1942   0.0894        1.50
+        aifs   0.1994   0.2272   0.2283   0.0532        1.41
+        gefs   0.2048   0.2235   0.2084   0.0559        1.39
+   two_model   0.1841   0.2228   0.2328   0.0827        1.44
+ three_model   0.1867   0.2318   0.2424   0.0738        1.43
+
+three_model vs the shipped two_model: 5dBZ +1.4%  10dBZ +4.0%  20dBZ +4.1%  30dBZ -10.7%
+verdict: keep the two-model mean
