@@ -1,0 +1,96 @@
+ML correction active: False  (false => 'gfs' is the raw model)
+case 2026-08-03 00:00Z
+  + 30m  persistence=0.4999  advection=0.6105  gfs=0.2417  blend=0.6105
+  + 90m  persistence=0.3330  advection=0.3999  gfs=0.2420  blend=0.4003
+  +150m  persistence=0.2602  advection=0.3041  gfs=0.2435  blend=0.3064
+  +210m  persistence=0.2119  advection=0.2420  gfs=0.2346  blend=0.2511
+  +270m  persistence=0.1787  advection=0.2040  gfs=0.2318  blend=0.2368
+case 2026-08-03 12:00Z
+  + 30m  persistence=0.4890  advection=0.6049  gfs=0.2254  blend=0.6049
+  + 90m  persistence=0.3191  advection=0.3874  gfs=0.2238  blend=0.3878
+  +150m  persistence=0.2520  advection=0.3030  gfs=0.2262  blend=0.3051
+  +210m  persistence=0.2098  advection=0.2532  gfs=0.2275  blend=0.2620
+  +270m  persistence=0.1830  advection=0.2166  gfs=0.2249  blend=0.2452
+case 2026-08-04 00:00Z
+  + 30m  persistence=0.4959  advection=0.5661  gfs=0.2359  blend=0.5661
+  + 90m  persistence=0.3248  advection=0.3606  gfs=0.2236  blend=0.3610
+  +150m  persistence=0.2563  advection=0.2748  gfs=0.2315  blend=0.2769
+  +210m  persistence=0.2150  advection=0.2212  gfs=0.2315  blend=0.2302
+  +270m  persistence=0.1883  advection=0.1698  gfs=0.2269  blend=0.2095
+case 2026-08-04 12:00Z
+  + 30m  persistence=0.4950  advection=0.5993  gfs=0.2118  blend=0.5993
+  + 90m  persistence=0.3217  advection=0.3870  gfs=0.2151  blend=0.3875
+  +150m  persistence=0.2460  advection=0.2929  gfs=0.2175  blend=0.2953
+  +210m  persistence=0.2070  advection=0.2424  gfs=0.2249  blend=0.2516
+  +270m  persistence=0.1734  advection=0.1915  gfs=0.2189  blend=0.2255
+case 2026-08-05 00:00Z
+  + 30m  persistence=0.4820  advection=0.5544  gfs=0.2242  blend=0.5544
+  + 90m  persistence=0.3186  advection=0.3507  gfs=0.2133  blend=0.3513
+  +150m  persistence=0.2526  advection=0.2676  gfs=0.2144  blend=0.2699
+  +210m  persistence=0.2206  advection=0.2154  gfs=0.2043  blend=0.2247
+case 2026-08-05 12:00Z
+  + 30m  persistence=0.5023  advection=0.6002  gfs=0.2171  blend=0.6002
+  + 90m  persistence=0.3293  advection=0.4010  gfs=0.2212  blend=0.4016
+  +150m  persistence=0.2510  advection=0.3096  gfs=0.2195  blend=0.3117
+  +210m  persistence=0.2044  advection=0.2478  gfs=0.2190  blend=0.2568
+  +270m  persistence=0.1686  advection=0.2016  gfs=0.2097  blend=0.2310
+
+=== pooled CSI, dBZ>=5, 6 case(s) ===
+lead      persistence    advection          gfs        blend
++ 30m        0.5559       0.6361       0.1520       0.6361
++ 90m        0.3919       0.4492       0.1478       0.4506
++150m        0.3179       0.3626       0.1494       0.3759
++210m        0.2733       0.3046       0.1488       0.3381
++270m        0.2354       0.2584       0.1474       0.2916
+
+=== pooled CSI, dBZ>=10, 6 case(s) ===
+lead      persistence    advection          gfs        blend
++ 30m        0.5434       0.6271       0.1713       0.6271
++ 90m        0.3779       0.4354       0.1664       0.4363
++150m        0.3037       0.3478       0.1678       0.3546
++210m        0.2592       0.2897       0.1679       0.3204
++270m        0.2223       0.2444       0.1666       0.2952
+
+=== pooled CSI, dBZ>=20, 6 case(s) ===
+lead      persistence    advection          gfs        blend
++ 30m        0.4942       0.5897       0.2261       0.5897
++ 90m        0.3245       0.3816       0.2233       0.3820
++150m        0.2531       0.2925       0.2255       0.2947
++210m        0.2113       0.2375       0.2238       0.2465
++270m        0.1785       0.1971       0.2225       0.2299
+
+=== pooled CSI, dBZ>=30, 6 case(s) ===
+lead      persistence    advection          gfs        blend
++ 30m        0.3741       0.4774       0.1186       0.4774
++ 90m        0.2109       0.2563       0.1154       0.2565
++150m        0.1509       0.1740       0.1150       0.1746
++210m        0.1168       0.1269       0.1171       0.1289
++270m        0.0959       0.0974       0.1212       0.1040
+
+=== pooled CSI by region, dBZ>=20 ===
+  tropics
+  + 30m        0.5270       0.5932       0.1721       0.5932
+  + 90m        0.3290       0.3696       0.1735       0.3698
+  +150m        0.2515       0.2740       0.1707       0.2750
+  +210m        0.2110       0.2210       0.1661       0.2255
+  +270m        0.1762       0.1861       0.1605       0.1998
+  midlat
+  + 30m        0.4798       0.5881       0.2562       0.5881
+  + 90m        0.3225       0.3872       0.2509       0.3878
+  +150m        0.2538       0.3014       0.2560       0.3042
+  +210m        0.2114       0.2457       0.2559       0.2571
+  +270m        0.1795       0.2027       0.2572       0.2452
+
+=== FSS (window 25), dBZ>=20 ===
+lead      persistence    advection          gfs        blend
++ 30m        0.9788       0.9814       0.7070       0.9814
++ 90m        0.9063       0.9237       0.7072       0.9238
++150m        0.8293       0.8571       0.7083       0.8585
++210m        0.7541       0.7815       0.7020       0.7926
++270m        0.6783       0.7098       0.6981       0.7608
+
+=== frequency bias, dBZ>=20 (>1 = too wet) ===
+   persistence: 1.02  1.05  1.05  1.05  1.07
+     advection: 0.96  1.02  1.02  0.99  0.96
+           gfs: 1.57  1.63  1.62  1.66  1.66
+         blend: 0.96  1.03  1.02  1.02  1.10
