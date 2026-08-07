@@ -53,6 +53,9 @@ WITH_AIFS = False
 # blend consumes on raw GFS and averages AIFS in only past that window. Defined
 # here rather than imported so verification does not drag in the build module.
 AIFS_FROM_MIN = 6 * 60
+# Set by --aifs-in-window: score AIFS at every lead, including inside the
+# satellite blend window where production currently keeps raw GFS.
+AIFS_IN_WINDOW = False
 
 
 def _cached(name: str, build, attempts: int = 3):
@@ -176,9 +179,14 @@ def run_case(session, t0, leads, gap_min=30):
 
         fh = int(round((valid - cycle).total_seconds() / 3600))
         # Production blends AIFS only past the satellite window (main.py keeps
-        # the blend's own frames on raw GFS), so the arm scored here has to
-        # follow the same rule or the fit is against a field that never ships.
-        use_aifs = WITH_AIFS and lead > AIFS_FROM_MIN
+        # the blend's own frames on raw GFS), so by default the arm scored here
+        # follows the same rule - otherwise a crossover fit here would be
+        # against a field that never ships. --aifs-in-window lifts that gate to
+        # answer the separate question of whether production *should* extend
+        # AIFS into the window, which cannot be tested with the shipped rule in
+        # force and cannot be tested from ml/gfs_pairs at all (those cases
+        # start at 6 h, exactly where the window ends).
+        use_aifs = WITH_AIFS and (AIFS_IN_WINDOW or lead > AIFS_FROM_MIN)
         gfs = load_gfs(session, cycle, fh, valid=valid, with_aifs=use_aifs)
         if gfs is None:
             continue
@@ -219,13 +227,18 @@ def main() -> int:
                     help="use the shipped GFS+AIFS mean as the model arm, not "
                          "raw GFS; required for any crossover refit since the "
                          "handover is fitted against whatever arm ships")
+    ap.add_argument("--aifs-in-window", action="store_true",
+                    help="with --with-aifs, also apply AIFS inside the blend "
+                         "window, which production does not - use to test "
+                         "whether it should")
     ap.add_argument("--archive", default=None, metavar="PATH",
                     help="append compact per-region counts to this JSONL archive, "
                          "skipping cases already in it (see verify/archive.py)")
     args = ap.parse_args()
 
-    global SWEEP_CROSSOVERS, MODELS, WITH_AIFS
+    global SWEEP_CROSSOVERS, MODELS, WITH_AIFS, AIFS_IN_WINDOW
     WITH_AIFS = args.with_aifs
+    AIFS_IN_WINDOW = args.aifs_in_window
     if args.sweep_crossover:
         SWEEP_CROSSOVERS = tuple(float(x) for x in args.sweep_crossover.split(","))
         MODELS = MODELS + tuple(f"x{c:g}" for c in SWEEP_CROSSOVERS)

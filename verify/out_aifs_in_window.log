@@ -1,0 +1,9 @@
+ML correction active: False  (false => 'gfs' is the raw model)
+case 2026-08-03 00:00Z
+aifs: opened ecmwf-aifs-single-forecast/v0.1.0.icechunk
+  + 30m  persistence=0.4999  advection=0.6105  gfs=0.2383  blend=0.6105
+  + 90m  persistence=0.3330  advection=0.3999  gfs=0.2524  blend=0.4001
+  +150m  persistence=0.2602  advection=0.3041  gfs=0.2545  blend=0.3051
+  +210m  persistence=0.2119  advection=0.2420  gfs=0.2629  blend=0.2472
+  +270m  persistence=0.1787  advection=0.2040  gfs=0.2580  blend=0.2221
+case 2026-08-03 12:00Z
