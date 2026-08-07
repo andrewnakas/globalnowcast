@@ -74,6 +74,28 @@ AIFS_MIN_LEAD_H = 6  # inside this the blend owns the frame; leave it raw
 # field's alpha. Left unbuilt deliberately rather than shipped half-calibrated.
 
 
+def _upsample(dbz: np.ndarray) -> np.ndarray:
+    """Model field (0.25 deg) onto the observation grid (0.1 deg), in rain rate.
+
+    Purely cosmetic continuity: the timeline runs observation -> blend -> model,
+    and rendering the last stretch on a 6x coarser grid made the handover look
+    like a different product rather than a later forecast. The `keep` copy the
+    blend consumes is deliberately NOT upsampled - the blend does its own
+    interpolation against the observation grid, and doing it twice would smooth
+    the field for no reason.
+    """
+    import cv2
+
+    import obs as _obs
+
+    target = _obs.GLOBAL_HI.shape
+    if dbz.shape == target:
+        return dbz
+    rate = cv2.resize(_obs.dbz_to_rain(np.maximum(dbz, _obs.FILL)),
+                      (target[1], target[0]), interpolation=cv2.INTER_LINEAR)
+    return _obs.rain_to_dbz(rate)
+
+
 def build_frame(session: requests.Session, cycle: datetime, lead: int,
                 keep: dict | None = None, aifs_by_valid: dict | None = None):
     valid = cycle + timedelta(hours=lead)
@@ -95,7 +117,15 @@ def build_frame(session: requests.Session, cycle: datetime, lead: int,
                 aifs_dbz = np.maximum(a, _obs.FILL)
                 field = _obs.rain_to_dbz(
                     0.5 * (_obs.dbz_to_rain(gfs_dbz) + _obs.dbz_to_rain(aifs_dbz)))
-            render_png(field, FRAMES_DIR / name, alpha=alpha)
+            # Render on the same grid as the nowcast frames. The models are
+            # native 0.25 and the observation product is 0.1, so shipping them
+            # at their native sizes made the animation visibly change character
+            # partway through: sharp cellular structure up to +4.5h, then
+            # abruptly 6x blockier. Upsampling is not new information, but it
+            # stops the grid itself from being the most obvious feature of the
+            # forecast. In rain rate, never dBZ - dBZ is logarithmic and
+            # interpolating it dims the result.
+            render_png(_upsample(field), FRAMES_DIR / name, alpha=alpha)
             if keep is not None:
                 # Stash the corrected field for the blend so the nowcast sees
                 # exactly what shipped, without a second fetch.
@@ -265,6 +295,15 @@ def main() -> None:
     with ThreadPoolExecutor(max_workers=8) as pool:
         frames = list(pool.map(one, leads))
     t_gfs = time.time() - t_gfs
+
+    # Not done here, deliberately: the model frames still paint ~21% of the map
+    # against the observation's ~8%, and probability-matching them to the
+    # observed wet area would visually smooth that handover. It would also make
+    # the forecast worse. verify/gfs_check.py measured frequency-matching GFS
+    # losing in 45/45 cases, because the model misplaces rain rather than
+    # merely over-producing it - shrinking its wet area discards hits without
+    # fixing placement. The wet-area step at the handover is real forecast
+    # disagreement, and hiding it would be a cosmetic lie.
 
     good = [f for f in frames if f]
     # Gate on the GFS frames only; the nowcast is additive and must not be able to

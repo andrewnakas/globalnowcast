@@ -1,0 +1,11 @@
+cycle 2026-08-07 00Z, leads f006..f054
+aifs: opened ecmwf-aifs-single-forecast/v0.1.0.icechunk
+aifs: 42 frames from 2026-08-06 18Z
+correction: using refc_correction_v3.onnx + correction_pm.npz
+nowcast: 17 frames from 2026-08-07 05:40Z (pair gap 30 min, flow p99 8.0px)
+conus layer: 19 frames from 2026-08-07 05:00Z (HRRR 04Z)
+built 49/49 frames + 17 nowcast + 19 conus
+stage times: aifs 34s, gfs 423s, nowcast 164s, conus 76s
+  obs    1801x3600  visible 0.0780
+  blend  1801x3600  visible 0.0759
+  gfs    1801x3600  visible 0.2521
