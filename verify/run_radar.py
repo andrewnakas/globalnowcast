@@ -82,6 +82,12 @@ def model_case(session, t0, leads_min, gap_min, grid):
     HRRR's 0.215 at +1 h - the reverse of the 0.282 vs 0.176 the crossover was
     fitted on - because satellite carries a CSI-0.18 sensor ceiling against
     radar. Refitting the handover from that would have moved it hours early.
+
+    Caveat on the corrected numbers quoted in 256173e: they come from a SINGLE
+    case (the rest of that run was lost to local DNS failures, not a harness
+    fault). They restore the expected ordering and sit close to the original
+    fit, which is what the fix had to demonstrate, but one case is not a refit.
+    The weekly job accumulates the sample that will be.
     """
     import conus
     import radar_model
