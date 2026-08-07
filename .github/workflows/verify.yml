@@ -47,11 +47,18 @@ jobs:
       - name: Score recent cases
         env:
           NOWCAST_CORRECT: "0"   # score the raw model, so rows stay comparable
+        # Best-effort: verify/run.py exits non-zero when it scores nothing,
+        # which is right interactively (silence would hide a broken harness)
+        # but wrong here. The window's far edge sits near the observation
+        # archive's ~2-week retention, so an empty run is expected
+        # occasionally - and failing the job on it also skips the commit step,
+        # discarding whatever the CONUS step did manage to score.
+        continue-on-error: true
         run: |
           # GFS is retained ~2 weeks and observations lag ~20 min, so a window that
           # ended a couple of days ago is safely complete on both sides.
           START="${{ inputs.start }}"
-          if [ -z "$START" ]; then START=$(date -u -d '9 days ago' +%Y-%m-%d); fi
+          if [ -z "$START" ]; then START=$(date -u -d '8 days ago' +%Y-%m-%d); fi
           DAYS="${{ inputs.days }}"; DAYS="${DAYS:-7}"
           echo "scoring $DAYS day(s) from $START"
           python verify/run.py \
@@ -72,6 +79,10 @@ jobs:
             --archive verify/archive_conus.jsonl
 
       - name: Summarise the archive
+        # Also best-effort, and for the same reason: archive.py exits non-zero
+        # on an archive too thin to refit, and this step runs BEFORE the commit
+        # step. A failure here would discard cases that scored perfectly well.
+        continue-on-error: true
         run: |
           python verify/archive.py
           python verify/archive.py --by season
