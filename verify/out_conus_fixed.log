@@ -1,0 +1,60 @@
+<Grid conus2km 1301x2951 @0.02deg (2.2 km)>, truth = MRMS radar, flow pair 30 min
+
+radar model: using nowcast.onnx + pm_tables.npz
+  12:00Z: HRRR cycle 11Z, 6 lead(s) scored
+  hrrr 11:00: HTTPSConnectionPool(host='noaa-hrrr-bdp-pds.s3.amazonaws.com', port=443): Max retries exceeded with url: /hrrr.20260807/conus/hrrr.t10z.wrfsfcf02.grib2.idx (Caused by NameResolutionError("HTTPSConnection(host='noaa-hrrr-bdp-pds.s3.amazonaws.com', port=443): Failed to resolve 'noaa-hrrr-bdp-pds.s3.amazonaws.com' ([Errno 8] nodename nor servname provided, or not known)"))
+  11:00Z: radar model unavailable
+  mrms rate 07:00: HTTPSConnectionPool(host='noaa-mrms-pds.s3.amazonaws.com', port=443): Max retries exceeded with url: /?list-type=2&prefix=CONUS/PrecipRate_00.00/20260807/&max-keys=1000 (Caused by NameResolutionError("HTTPSConnection(host='noaa-mrms-pds.s3.amazonaws.com', port=443): Failed to resolve 'noaa-mrms-pds.s3.amazonaws.com' ([Errno 8] nodename nor servname provided, or not known)"))
+radar model: MRMS history incomplete
+  10:00Z: radar model unavailable
+
+1 case(s), CONUS, ~2.2 km grid, verified against MRMS radar
+
+=== CSI at 1 mm/h ===
+   lead  persistence    advection         hrrr        blend  radar_model
+   +60m       0.2325       0.3079       0.2393       0.3265       0.1867
+  +120m       0.1372       0.1734       0.1668       0.1931       0.1179
+  +180m       0.0950       0.1174       0.1332       0.1435       0.0416
+  +240m       0.0515       0.0787       0.1034       0.1067       0.0500
+  +300m       0.0181       0.0253       0.0794       0.0786       0.0358
+  +360m       0.0089       0.0043       0.0799       0.0798       0.0482
+
+=== CSI at 2 mm/h ===
+   lead  persistence    advection         hrrr        blend  radar_model
+   +60m       0.1818       0.2544       0.2108       0.2791       0.1026
+  +120m       0.1065       0.1421       0.1383       0.1580       0.0893
+  +180m       0.0775       0.1014       0.1039       0.1125       0.0194
+  +240m       0.0301       0.0496       0.0600       0.0610       0.0265
+  +300m       0.0079       0.0117       0.0506       0.0505       0.0197
+  +360m       0.0051       0.0020       0.0430       0.0427       0.0278
+
+=== CSI at 4 mm/h ===
+   lead  persistence    advection         hrrr        blend  radar_model
+   +60m       0.0944       0.1349       0.1366       0.1544       0.0544
+  +120m       0.0524       0.0724       0.0998       0.1069       0.0468
+  +180m       0.0394       0.0657       0.0709       0.0744       0.0092
+  +240m       0.0165       0.0257       0.0421       0.0421       0.0167
+  +300m       0.0042       0.0057       0.0389       0.0386       0.0149
+  +360m       0.0020       0.0006       0.0237       0.0236       0.0146
+
+=== CSI at 8 mm/h ===
+   lead  persistence    advection         hrrr        blend  radar_model
+   +60m       0.0487       0.0665       0.0452       0.0619       0.0323
+  +120m       0.0138       0.0384       0.0499       0.0528       0.0073
+  +180m       0.0042       0.0138       0.0362       0.0342       0.0059
+  +240m       0.0039       0.0061       0.0281       0.0273       0.0091
+  +300m       0.0011       0.0035       0.0277       0.0273       0.0141
+  +360m       0.0012       0.0003       0.0148       0.0145       0.0041
+
+=== FSS (window 25 px ~ 55 km), 1 mm/h ===
+   lead  persistence    advection         hrrr        blend  radar_model
+   +60m       0.7103       0.7784       0.6854       0.8095       0.5612
+  +120m       0.5108       0.5693       0.5409       0.6075       0.4212
+  +180m       0.3898       0.4764       0.4957       0.5254       0.2050
+  +240m       0.2249       0.3408       0.4283       0.4430       0.2522
+  +300m       0.0906       0.1280       0.3658       0.3641       0.2082
+  +360m       0.0478       0.0268       0.3578       0.3577       0.2524
+
+wet area at 1 mm/h: satellite 0.0105 vs radar 0.0152 (0.69x)
+This is the retrieval's own bias against the instrument it is scored
+on, and it caps how high CSI can go regardless of the motion field.

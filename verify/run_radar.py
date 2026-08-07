@@ -28,6 +28,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "pipeline"))
 sys.path.insert(0, str(HERE))
 
+import mrms  # noqa: E402
 import nowcast  # noqa: E402
 import obs  # noqa: E402
 import radar  # noqa: E402
@@ -71,10 +72,18 @@ def one_case(session, t0, leads_min, gap_min, grid):
 
 
 def model_case(session, t0, leads_min, gap_min, grid):
-    """Four-way comparison at hourly leads, anchored at a top-of-hour: the radar
-    model + PM, the HRRR forecast it corrects, and the satellite advection that
-    covers CONUS when the model layer is down. All on the same truth and mask, with
-    the HRRR cycle chosen as the live job at t0+10min would have chosen it."""
+    """Comparison at hourly leads, anchored at a top-of-hour, of everything the
+    CONUS layer could ship: MRMS radar advection, the HRRR forecast it hands
+    over to, the shipped blend of the two, and the trained radar model.
+
+    The advection arm is built from MRMS, not satellite, because that is what
+    pipeline/conus.py actually advects. The first eight archived cases were
+    scored with a satellite arm by mistake and put advection at 0.177 against
+    HRRR's 0.215 at +1 h - the reverse of the 0.282 vs 0.176 the crossover was
+    fitted on - because satellite carries a CSI-0.18 sensor ceiling against
+    radar. Refitting the handover from that would have moved it hours early.
+    """
+    import conus
     import radar_model
 
     out = radar_model.predict_anchor(session, t0, grid,
@@ -83,29 +92,43 @@ def model_case(session, t0, leads_min, gap_min, grid):
     if out is None:
         print(f"  {t0:%H:%MZ}: radar model unavailable")
         return []
-    anchor = obs.fetch_frame(session, t0, levels=(5,), latency_min=0, grid=grid)
-    prior = obs.fetch_frame(session, t0 - timedelta(minutes=gap_min),
-                            levels=(5,), latency_min=0, grid=grid)
-    if anchor is None or prior is None:
-        print(f"  {t0:%H:%MZ}: no satellite pair")
+
+    # The shipped layer: MRMS advection blended into HRRR at conus.py's own
+    # handover, built exactly as the live job would have built it at t0.
+    valids = [t0 + timedelta(minutes=m) for m in leads_min]
+    got = conus.predict(session, t0 + timedelta(minutes=10), valids, grid=grid,
+                        avail=t0 + timedelta(minutes=10))
+    if got is None:
+        print(f"  {t0:%H:%MZ}: conus layer unavailable")
         return []
-    sat, sat_mask = anchor[0], anchor[1]
-    flow = nowcast.estimate_flow(prior[0], sat, gap_min, km_per_px=KM_PER_PX)
+    blend_by_valid, blend_mask, _ = got
+
+    last = mrms.fetch_rate(session, t0, grid)
+    prev = mrms.fetch_rate(session, t0 - timedelta(minutes=gap_min), grid)
+    if last is None or prev is None:
+        print(f"  {t0:%H:%MZ}: no MRMS flow pair")
+        return []
+    rad_now, rad_now_mask, _ = last
+    gap = (t0 - prev[2]).total_seconds() / 60.0
+    if gap <= 0:
+        return []
+    flow = nowcast.estimate_flow(prev[0], rad_now, gap, km_per_px=KM_PER_PX)
 
     rows = []
     for lead in leads_min:
         valid = t0 + timedelta(minutes=lead)
-        if valid not in out["by_valid"]:
+        if valid not in out["by_valid"] or valid not in blend_by_valid:
             continue
         truth = radar.fetch(session, valid, grid)
         if truth is None:
             continue
         rad, rad_mask, _ = truth
-        mask = sat_mask & rad_mask & out["mask"]
+        mask = rad_now_mask & rad_mask & out["mask"] & blend_mask
         fields = {
-            "persistence": sat,
-            "advection": nowcast.advect(sat, flow, lead / 30.0),
+            "persistence": rad_now,
+            "advection": nowcast.advect(rad_now, flow, lead / 30.0),
             "hrrr": out["hrrr_by_valid"][valid],
+            "blend": blend_by_valid[valid],
             "radar_model": out["by_valid"][valid],
         }
         rows.append((lead, fields, rad, mask))
@@ -186,7 +209,7 @@ def main() -> int:
         print("no cases scored")
         return 1
 
-    models = (("persistence", "advection", "hrrr", "radar_model")
+    models = (("persistence", "advection", "hrrr", "blend", "radar_model")
               if args.with_model else ("persistence", "advection"))
     print(f"\n{n} case(s), CONUS, ~2.2 km grid, verified against MRMS radar")
     for mmhr in THRESHOLDS:
