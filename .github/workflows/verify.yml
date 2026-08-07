@@ -77,14 +77,22 @@ jobs:
           python verify/archive.py --by season
 
       - name: Commit new cases
+        # Add only the archives that exist. Naming archive_conus.jsonl here
+        # before the CONUS step had ever produced one made `git diff` fail on a
+        # path git has never seen, which killed the step - so the global
+        # archive stopped accumulating too, silently, and sat at 20 cases for
+        # weeks while the job kept reporting that it had scored them.
+        shell: bash   # the array below is not POSIX sh
         run: |
-          if git diff --quiet -- verify/archive.jsonl verify/archive_conus.jsonl \
-              && [ -z "$(git status --porcelain verify/archive_conus.jsonl)" ]; then
-            echo "no new cases"; exit 0
-          fi
+          FILES=()
+          for f in verify/archive.jsonl verify/archive_conus.jsonl; do
+            [ -f "$f" ] && FILES+=("$f")
+          done
+          if [ ${#FILES[@]} -eq 0 ]; then echo "no archives on disk"; exit 0; fi
+          git add -- "${FILES[@]}"
+          if git diff --cached --quiet; then echo "no new cases"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add verify/archive.jsonl verify/archive_conus.jsonl
           git commit -m "Add verification cases through $(date -u +%Y-%m-%d)
 
           Appended by .github/workflows/verify.yml. Counts only; refit with

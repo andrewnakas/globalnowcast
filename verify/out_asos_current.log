@@ -1,0 +1,60 @@
+2026-08-06 10:00 .. 2026-08-07 10:00 UTC
+59945 gauge reports from 2561 stations
+  08-06 10Z: 2473 stations, gauge wet 0.022 radar wet 0.031 blend wet 0.025
+  08-06 11Z: 2472 stations, gauge wet 0.017 radar wet 0.032 blend wet 0.024
+  mrms 11:50: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-06 12Z: 2488 stations, gauge wet 0.018 radar wet 0.037 blend wet 0.020
+  08-06 13Z: 2511 stations, gauge wet 0.023 radar wet 0.039 blend wet 0.023
+  08-06 14Z: 2524 stations, gauge wet 0.021 radar wet 0.038 blend wet 0.023
+  08-06 15Z: 2520 stations, gauge wet 0.017 radar wet 0.040 blend wet 0.032
+  mrms 15:20: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-06 16Z: 2517 stations, gauge wet 0.020 radar wet 0.043 blend wet 0.031
+  08-06 17Z: 2520 stations, gauge wet 0.024 radar wet 0.060 blend wet 0.026
+  mrms 17:40: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-06 18Z: 2492 stations, gauge wet 0.034 radar wet 0.065 blend wet 0.038
+  08-06 19Z: 2505 stations, gauge wet 0.037 radar wet 0.090 blend wet 0.039
+  mrms 19:40: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-06 20Z: 2514 stations, gauge wet 0.039 radar wet 0.111 blend wet 0.064
+  mrms 20:30: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-06 21Z: 2508 stations, gauge wet 0.045 radar wet 0.122 blend wet 0.065
+  mrms 21:10: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-06 22Z: 2516 stations, gauge wet 0.046 radar wet 0.117 blend wet 0.070
+  mrms 22:30: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-06 23Z: 2509 stations, gauge wet 0.040 radar wet 0.104 blend wet 0.082
+  mrms 23:50: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  mrms 23:40: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))
+  08-07 00Z: 2507 stations, gauge wet 0.033 radar wet 0.098 blend wet 0.071
+  mrms anchor: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+conus: no recent MRMS frame
+  08-07 01Z: 2501 stations, gauge wet 0.023 radar wet 0.092
+  08-07 02Z: 2481 stations, gauge wet 0.020 radar wet 0.070 blend wet 0.061
+  mrms 02:20: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-07 03Z: 2476 stations, gauge wet 0.018 radar wet 0.057 blend wet 0.044
+  mrms anchor: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+conus: no recent MRMS frame
+  08-07 04Z: 2470 stations, gauge wet 0.012 radar wet 0.046
+  08-07 05Z: 2469 stations, gauge wet 0.015 radar wet 0.038 blend wet 0.022
+  08-07 06Z: 2458 stations, gauge wet 0.013 radar wet 0.035 blend wet 0.020
+  08-07 07Z: 2459 stations, gauge wet 0.016 radar wet 0.035 blend wet 0.015
+  mrms 07:10: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+  08-07 08Z: 2463 stations, gauge wet 0.015 radar wet 0.029 blend wet 0.015
+  08-07 09Z: 2457 stations, gauge wet 0.019 radar wet 0.033 blend wet 0.017
+
+=== MRMS radar vs ASOS gauges, 24 hour(s) ===
+   threshold      CSI     POD     FAR    bias
+      0.2 mm   0.2520   0.703   0.718    2.49
+        1 mm   0.2326   0.612   0.727    2.24
+        4 mm   0.1267   0.386   0.841    2.43
+        8 mm   0.1026   0.277   0.860    1.98
+
+=== CONUS blend (+2h forecast) vs ASOS gauges, 22 hour(s) ===
+   threshold      CSI     POD     FAR    bias
+      0.2 mm   0.1774   0.376   0.749    1.49
+        1 mm   0.1179   0.282   0.832    1.68
+        4 mm   0.0488   0.127   0.926    1.72
+        8 mm   0.0305   0.072   0.950    1.43
+
+This is the truth source the model is trained against, measured against an
+independent instrument. Whatever disagreement shows up here is a floor on
+how well any radar-trained model can score against gauges - the model
+cannot be better than the data it learned from.
