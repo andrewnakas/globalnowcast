@@ -38,7 +38,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Build forecast frames
-        run: python pipeline/main.py
+        # timeout-minutes on the job did not save us: on 2026-08-06 two
+        # scheduled builds hung inside a network read and ran 15 min and 2h47m
+        # before GitHub reaped them, straight past the 20-minute job limit. A
+        # step-level timeout plus SIGKILL bounds the process itself, so a
+        # wedged socket costs one build instead of an hour of runner time.
+        timeout-minutes: 12
+        run: timeout --signal=KILL 10m python pipeline/main.py
 
       - uses: actions/upload-pages-artifact@v3
         with:

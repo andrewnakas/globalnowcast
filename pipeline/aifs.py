@@ -17,7 +17,8 @@ failure, so an outage costs the AIFS arm and leaves GFS untouched.
 import os
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -132,6 +133,13 @@ def fetch(now: datetime, valids, retries: int = 3):
         import time as _time
         deadline = _time.monotonic() + DEADLINE_S
 
+        # DEADLINE_S alone is not enough, and two hourly builds proved it: on
+        # 2026-08-06 the job ran 2h47m before GitHub reaped it, straight past
+        # its own timeout-minutes: 20. A deadline checked *between* reads
+        # cannot interrupt a read already blocked inside the store's native
+        # code, so one hung socket stalls the runner indefinitely. The pool
+        # below is therefore given a wall-clock bound of its own, and whatever
+        # has not arrived by then is simply dropped.
         def read(lead_h):
             for attempt in range(retries):
                 if _time.monotonic() > deadline:
@@ -155,8 +163,27 @@ def fetch(now: datetime, valids, retries: int = 3):
             for v in valids
             if 0 <= (v - init_dt).total_seconds() / 3600 <= MAX_LEAD_H
             for off in (0, LEAD_STEP_H)})
-        with ThreadPoolExecutor(max_workers=min(8, len(wanted) or 1)) as pool:
-            steps = dict(zip(wanted, pool.map(read, wanted)))
+        # Submit rather than map: map() waits for every future no matter what,
+        # so a single wedged read holds the whole build. With futures the pool
+        # can be abandoned at the deadline, keeping whatever did arrive.
+        steps = {}
+        pool = ThreadPoolExecutor(max_workers=min(8, len(wanted) or 1))
+        try:
+            futs = {pool.submit(read, h): h for h in wanted}
+            for fut in as_completed(futs, timeout=max(DEADLINE_S, 1.0)):
+                try:
+                    steps[futs[fut]] = fut.result()
+                except Exception as e:  # noqa: BLE001
+                    print(f"  aifs +{futs[fut]}h: {type(e).__name__}",
+                          file=sys.stderr)
+        except FuturesTimeout:
+            print(f"aifs: deadline hit, {len(steps)}/{len(wanted)} steps in",
+                  file=sys.stderr)
+        finally:
+            # Do not join the stragglers: a wedged read never returns, and
+            # waiting on it here would reintroduce exactly the stall this
+            # guards against. The threads are daemons of a pool we drop.
+            pool.shutdown(wait=False, cancel_futures=True)
 
         def step(lead_h):
             return steps.get(lead_h)
